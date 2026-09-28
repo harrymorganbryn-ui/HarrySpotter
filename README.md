@@ -43,6 +43,44 @@ To **run** the app:
 To **build** it from source: Python 3.12+ with Tkinter, plus the packages in
 `requirements.txt`.
 
+## Installing
+
+Download a ready-built app from the
+[**latest release**](https://github.com/harrymorganbryn-ui/HarrySpotter/releases/latest)
+(under **Assets**) — no Python needed.
+
+### macOS (Apple Silicon — M1 or later)
+
+1. Download `HarrySpotter-<version>-macOS-AppleSilicon.zip` and unzip it
+   (Safari usually does this automatically).
+2. Drag `HarrySpotter.app` into **Applications**.
+3. Open it. The first time, macOS will say it can't verify the developer (the app
+   isn't notarised): go to **System Settings → Privacy & Security** and click
+   **Open Anyway** — or right-click the app → **Open** → **Open**.
+4. On the start screen, click **Browse…** and choose (or create) a project folder,
+   e.g. `Documents/HarrySpotter`. Your inputs and results are kept there, and it's
+   remembered next time.
+
+On an Intel Mac, [build from source](#building).
+
+### Windows 10/11
+
+1. Download `HarrySpotter-<version>-Windows.zip`.
+2. Right-click it → **Extract All…** into a folder you can write to, such as
+   Documents (not Program Files).
+3. Open the extracted folder and double-click `HarrySpotter.exe`. If
+   **"Windows protected your PC"** appears, click **More info → Run anyway**
+   (first time only).
+4. Keep the folder together — it's the app's project folder, and results are saved
+   inside it.
+
+### After installing
+
+Install the tools listed under [Requirements](#requirements). The app's
+**Software** card shows a tick for each one it finds, with a download link if not,
+and **Locate…** if one is installed somewhere unusual. The first launch also walks
+you through connecting Google Drive.
+
 ## Building
 
 ### macOS
@@ -71,7 +109,8 @@ python3 HarrySpotter.py
 ## Using it
 
 1. **Open a project** — a folder that will hold `input/` (reference PDB, apo MTZ,
-   `input/mtz/` datasets) and the results. A built app defaults to its own folder.
+   `input/mtz/` datasets) and the results. The Windows app defaults to its own
+   folder; on a Mac, pick one with **Browse…** the first time.
 2. **Enter the MX visit** (e.g. `mx12345-1`) and click **Sync now**.
 3. Check the **Inputs** (reference PDB, apo ground-state MTZ) and **Software** cards.
 4. Set the **chain**, **residue** and **contour level**, choose the mode, and
