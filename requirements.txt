@@ -1,0 +1,5 @@
+# Needed to run from source
+Pillow>=10
+
+# Needed only to build the standalone app
+pyinstaller>=6

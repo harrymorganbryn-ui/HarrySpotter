@@ -1,0 +1,29 @@
+# Build output
+build/
+dist/
+dist.noindex/
+package/
+*.zip
+logo.ico
+__pycache__/
+*.pyc
+
+# Project data and results - never commit beamtime data
+input/
+results/
+*_results/
+*.mtz
+*.pdb
+*.cif
+*.gif
+*.tga
+*.log
+
+# App settings / sync records
+settings-v3.json
+config.json
+.harryspotter_sync.json
+
+# OS clutter
+.DS_Store
+Thumbs.db
