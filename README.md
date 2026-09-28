@@ -92,6 +92,12 @@ Settings are remembered per project in
 | `package_windows.bat`, `README_FIRST.txt` | Windows shareable zip |
 | `lab_logo.png`, `logo.icns` | artwork |
 
+## Citing
+
+If you use Harry Spotter in your research, please cite it — use the
+**"Cite this repository"** button on GitHub, or see [`CITATION.cff`](CITATION.cff).
+Each release is archived on Zenodo with its own DOI.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE). © 2026 Harry Morgan.

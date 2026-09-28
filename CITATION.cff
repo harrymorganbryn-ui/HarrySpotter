@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use Harry Spotter in your research, please cite it as below."
+title: "Harry Spotter"
+abstract: >-
+  Desktop app (macOS and Windows) for spotting ligand density in time-resolved
+  and apo crystallography datasets. It syncs a beamtime visit's latest merged
+  data from Google Drive, computes Fo-Fo (Phenix) or Dimple difference maps,
+  renders 360-degree density views around a target residue in Coot, and
+  supports rapid review with a grouped CSV export.
+type: software
+authors:
+  - family-names: Morgan
+    given-names: Harry
+    affiliation: University of Bath
+version: "3.1"
+date-released: 2026-09-28
+license: MIT
+repository-code: "https://github.com/harrymorganbryn-ui/HarrySpotter"
+keywords:
+  - crystallography
+  - time-resolved crystallography
+  - serial crystallography
+  - difference maps
+  - ligand binding
+  - Phenix
+  - Coot
+  - Dimple
