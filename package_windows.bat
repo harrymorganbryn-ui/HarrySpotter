@@ -20,7 +20,9 @@ rem Only the app goes in the zip - no input data, results or settings.
 
 echo == Zipping...
 if exist HarrySpotter-3.1-Windows.zip del HarrySpotter-3.1-Windows.zip
-powershell -NoProfile -Command "Compress-Archive -Path 'package\HarrySpotter-3.1' -DestinationPath 'HarrySpotter-3.1-Windows.zip'" || goto :fail
+rem tar (built into Windows 10/11) writes standard zips; PowerShell's Compress-Archive
+rem uses backslash paths, which break when the zip is opened on a Mac or Linux.
+tar -a -c -f HarrySpotter-3.1-Windows.zip -C package HarrySpotter-3.1 || goto :fail
 rmdir /s /q package
 
 echo.
