@@ -1,5 +1,9 @@
 # Harry Spotter
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23020039.svg)](https://doi.org/10.5281/zenodo.23020039)
+[![Latest release](https://img.shields.io/github/v/release/harrymorganbryn-ui/HarrySpotter)](https://github.com/harrymorganbryn-ui/HarrySpotter/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A desktop app for quickly checking crystallographic datasets for ligand density
 around a target residue, for time-resolved serial crystallography and apo screening.
 
@@ -133,9 +137,14 @@ Settings are remembered per project in
 
 ## Citing
 
-If you use Harry Spotter in your research, please cite it — use the
-**"Cite this repository"** button on GitHub, or see [`CITATION.cff`](CITATION.cff).
-Each release is archived on Zenodo with its own DOI.
+If you use Harry Spotter in your research, please cite it:
+
+> Morgan, H. *Harry Spotter* (software). Zenodo. https://doi.org/10.5281/zenodo.23020039
+
+This DOI always points to the latest version. To cite a specific release, use its
+own DOI from [Zenodo](https://doi.org/10.5281/zenodo.23020039) (v3.1:
+[10.5281/zenodo.23020040](https://doi.org/10.5281/zenodo.23020040)). GitHub's
+**"Cite this repository"** button gives APA and BibTeX formats.
 
 ## Licence
 
