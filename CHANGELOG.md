@@ -28,8 +28,6 @@
 - Windows: a visit folder that Google Drive shows as a Windows shortcut (`.lnk`) is
   followed; if a visit can't be found, the log lists look-alike names and where it searched.
 - Windows: PyMOL is also found via the registry and Start Menu shortcuts.
-- Harry Spotter and Tooke lab logos in the start and main windows; app logo as the
-  window/taskbar icon.
 
 ## 3.1
 - CSV export grouped by protein and ligand (from the Drive folder each dataset came
