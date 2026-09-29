@@ -29,7 +29,8 @@ It runs on **macOS** and **Windows**.
   intensity arrays (`IMEAN`/`Iobs`).
 - **Chain + residue targeting**, checked live against the reference PDB.
 - **Review window** — animated spin GIFs, Ligand present / No ligand calls, filters,
-  open any dataset in Coot, and a CSV grouped by protein and ligand.
+  open any dataset in Coot or PyMOL (centred on your target residue), and a CSV
+  grouped by protein and ligand.
 - **Setup checks** — shows which of Phenix, Coot and Dimple were found (with download
   links if not), and guides new users through connecting Google Drive for Desktop.
 
@@ -43,6 +44,7 @@ To **run** the app:
 | [Phenix](https://phenix-online.org/download/) | time-resolved Fo-Fo maps |
 | [CCP4](https://www.ccp4.ac.uk/download/) (Dimple) | apo screening |
 | [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/) / WinCoot | rendering and inspection |
+| [PyMOL](https://pymol.org/) (optional) | "Open in PyMOL" from the results — maps are converted with CCP4's `gemmi` |
 
 To **build** it from source: Python 3.12+ with Tkinter, plus the packages in
 `requirements.txt`.
@@ -78,6 +80,10 @@ On an Intel Mac, [build from source](#building).
 4. Keep the folder together — it's the app's project folder, and results are saved
    inside it.
 
+Spin GIFs are drawn by Coot, so Coot needs working OpenGL graphics — normal PCs have
+this, but most virtual machines don't (the app says so if Coot can't draw). WinCoot 1
+is recommended: WinCoot 0.9 opens every screenshot it takes in an image viewer.
+
 ### After installing
 
 Install the tools listed under [Requirements](#requirements). The app's
@@ -100,7 +106,7 @@ The app is written to `dist/HarrySpotter.app`.
 
 Double-click `build_windows.bat` (it installs the build tools, makes the icon and
 builds). The app is written to `dist\HarrySpotter\HarrySpotter.exe`.
-Then run `package_windows.bat` to make a shareable `HarrySpotter-3.1-Windows.zip`
+Then run `package_windows.bat` to make a shareable `HarrySpotter-3.2-Windows.zip`
 (see `README_FIRST.txt`, which goes inside the zip).
 
 ### Running from source

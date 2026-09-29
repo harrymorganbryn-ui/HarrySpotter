@@ -2,6 +2,7 @@ import os
 import glob
 import subprocess
 import datetime
+import time
 import sys
 import threading
 import csv
@@ -174,6 +175,188 @@ def choose_fobs_label(path):
     return None
 
 
+COOT_RENDER_TIMEOUT = 300   # seconds; a normal render takes ~15-30 s
+
+
+def coot_env():
+    """Environment for launching Coot. On Windows, Coot 1 (GTK 4) tries Vulkan
+    first when a Vulkan driver is present; in some setups (e.g. virtual
+    machines with Microsoft's OpenCL/OpenGL/Vulkan Compatibility Pack) that
+    fails and Coot quits at once. Skipping Vulkan makes GTK use OpenGL, as it
+    does on ordinary PCs. A value the user has set themselves is kept."""
+    env = dict(os.environ)
+    if IS_WINDOWS:
+        env.setdefault("GDK_DISABLE", "vulkan")
+    return env
+
+
+def kill_process_tree(proc):
+    """Stop a Coot launch and everything it started (WinCoot runs via a .bat
+    that starts coot.exe, so killing only the shell would leave Coot open)."""
+    try:
+        if IS_WINDOWS:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, **NO_WINDOW)
+        else:
+            import signal
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=10)
+    except Exception:
+        pass
+
+
+def coot_opengl_failed(log_path):
+    """If Coot's log shows it couldn't create an OpenGL context (so it can't
+    draw anything), return a short reason; otherwise None. Coot's routine
+    shader warnings don't count."""
+    try:
+        with open(log_path, errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return None
+    if "libEGL not available" in text:
+        return "libEGL not available"
+    if "VK_ERROR_INITIALIZATION_FAILED" in text:
+        return "Vulkan graphics failed to start"
+    for pattern in ("gtk_gl_area_get_error() returned an error", "Unable to create a GL context",
+                    "Failed to create OpenGL context", "No GL implementation is available",
+                    "Could not create GL context"):
+        if pattern in text:
+            return "no OpenGL context"
+    return None
+
+
+# Map coefficient columns, in order of preference.
+DIFF_MAP_COLUMNS = [("FoFo", "PHFc"), ("F_OBS_MINUS_F_OBS", "PHIF_OBS_MINUS_F_OBS"),
+                    ("DELFWT", "PHDELWT"), ("FOFCWT", "PHFOFCWT")]
+TWOFOFC_MAP_COLUMNS = [("FWT", "PHWT"), ("2FOFCWT", "PH2FOFCWT")]
+
+
+def find_gemmi(hints=()):
+    """The gemmi command-line tool that comes with CCP4 (used to turn MTZ map
+    coefficients into maps PyMOL can read). `hints` are other CCP4 program
+    paths (e.g. Dimple) - gemmi lives in the same bin folder."""
+    exe = "gemmi.exe" if IS_WINDOWS else "gemmi"
+    for hint in hints:
+        if hint and (os.path.sep in hint or "/" in hint):
+            cand = os.path.join(os.path.dirname(hint), exe)
+            if os.path.isfile(cand):
+                return cand
+    if shutil.which("gemmi"):
+        return shutil.which("gemmi")
+    if IS_WINDOWS:
+        bases = [os.environ.get("SystemDrive", "C:") + "\\", os.path.expanduser("~")] + \
+                [os.environ.get(v) for v in ("ProgramFiles", "ProgramFiles(x86)") if os.environ.get(v)]
+        patterns = ["CCP4*\\bin\\gemmi.exe", "CCP4*\\*\\bin\\gemmi.exe"]
+    else:
+        bases = ["/Applications", os.path.expanduser("~/Applications")]
+        patterns = ["ccp4-*/bin/gemmi"]
+    for base in bases:
+        for pattern in patterns:
+            found = sorted(glob.glob(os.path.join(base, pattern)))
+            if found:
+                return found[-1]
+    return None
+
+
+def make_ccp4_maps(mtz, folder, name, gemmi_hints=()):
+    """Turn an MTZ's map coefficients into CCP4 maps for PyMOL.
+
+    Returns (maps, problem): maps is a list of (kind, path, f_col, phi_col)
+    for kind "diff" (difference map) and "2fofc" (if present); problem is a
+    message if a map couldn't be made (PyMOL is then asked to read the MTZ
+    itself, which licensed PyMOL can do)."""
+    cols = {c for c, _t in read_mtz_columns(mtz)}
+    wanted = []
+    for kind, pairs in (("diff", DIFF_MAP_COLUMNS), ("2fofc", TWOFOFC_MAP_COLUMNS)):
+        for f_col, phi_col in pairs:
+            if f_col in cols and phi_col in cols:
+                wanted.append((kind, f_col, phi_col))
+                break
+    if not wanted:
+        return [], "no map coefficients found in the MTZ"
+
+    maps, problem = [], None
+    try:
+        import gemmi as gemmi_lib      # the Python library, if available
+    except ImportError:
+        gemmi_lib = None
+    gemmi_exe = None if gemmi_lib else find_gemmi(gemmi_hints)
+
+    for kind, f_col, phi_col in wanted:
+        out = os.path.join(folder, f"{name}_{kind}.ccp4")
+        if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(mtz):
+            maps.append((kind, out, f_col, phi_col))
+            continue
+        try:
+            if gemmi_lib:
+                grid = gemmi_lib.read_mtz_file(mtz).transform_f_phi_to_map(f_col, phi_col, sample_rate=3)
+                ccp4 = gemmi_lib.Ccp4Map()
+                ccp4.grid = grid
+                ccp4.update_ccp4_header()
+                ccp4.write_ccp4_map(out)
+            elif gemmi_exe:
+                subprocess.run([gemmi_exe, "sf2map", "-f", f_col, "-p", phi_col, "-s", "3", mtz, out],
+                               capture_output=True, timeout=120, check=True, **NO_WINDOW)
+            else:
+                raise FileNotFoundError("gemmi (part of CCP4) not found")
+            maps.append((kind, out, f_col, phi_col))
+        except Exception as e:
+            problem = f"couldn't make a map file ({e})"
+            maps.append((kind, None, f_col, phi_col))   # PyMOL will try the MTZ directly
+    return maps, problem
+
+
+def pymol_script(pdb, mtz, maps, name, chain, residue, contour):
+    """Python script for PyMOL: model + maps around the target residue,
+    difference density green (+) / red (-), 2mFo-DFc blue, black background."""
+    target = f"{name} and chain {chain} and resi {residue}" if chain and residue else name
+    lines = [
+        "from pymol import cmd",
+        "cmd.set('normalize_ccp4_maps', 1)   # map levels in sigma",
+        f"cmd.load({pdb!r}, {name!r})",
+    ]
+    for kind, path, f_col, phi_col in maps:
+        obj = f"{name}_{kind}"
+        if path:
+            lines.append(f"cmd.load({path!r}, {obj!r})")
+        else:
+            lines += ["try:",
+                      f"    cmd.load_mtz({mtz!r}, {obj!r}, amplitudes={f_col!r}, phases={phi_col!r})",
+                      "    for o in cmd.get_names('objects'):",
+                      f"        if o.startswith({obj!r}) and o != {obj!r}: cmd.set_name(o, {obj!r})",
+                      "except Exception as e:",
+                      f"    print('Harry Spotter: could not load the {kind} map:', e)"]
+        if kind == "diff":
+            lines += [f"cmd.isomesh({obj + '_pos'!r}, {obj!r}, {contour}, {target!r}, 10)",
+                      f"cmd.isomesh({obj + '_neg'!r}, {obj!r}, -{contour}, {target!r}, 10)",
+                      f"cmd.color('green', {obj + '_pos'!r})",
+                      f"cmd.color('red', {obj + '_neg'!r})"]
+        else:
+            lines += [f"cmd.isomesh({obj + '_mesh'!r}, {obj!r}, 1.0, {target!r}, 5)",
+                      f"cmd.color('skyblue', {obj + '_mesh'!r})"]
+    lines += [
+        "cmd.bg_color('black')",
+        "cmd.set('ray_opaque_background', 1)",
+        f"cmd.hide('everything', {name!r})",
+        f"cmd.show('cartoon', {name!r})",
+        f"cmd.color('grey50', {name!r} + ' and elem C')",   # grey model so green/red density stands out
+        f"cmd.set('cartoon_color', 'grey40', {name!r})",
+        f"cmd.set('cartoon_transparency', 0.7, {name!r})",
+        f"cmd.show('sticks', 'byres ((' + {target!r} + ') expand 6) and not name H*')",
+        f"cmd.color('yellow', '({target}) and elem C')",
+        f"cmd.label('({target}) and name CA', '\"%s%s\" % (resn, resi)')",
+        "cmd.set('label_color', 'white')",
+        f"cmd.zoom({target!r}, 10)",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def copy_complete(src, dest):
     """copy2 via a temp file, so an interrupted Drive download never leaves a
     truncated MTZ/PDB where the pipeline would pick it up."""
@@ -184,6 +367,50 @@ def copy_complete(src, dest):
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+
+
+def windows_registered_app(exe_names):
+    """Program path recorded by its installer under Windows' "App Paths", or None."""
+    if not IS_WINDOWS:
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for name in exe_names:
+            try:
+                with winreg.OpenKey(hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths" + "\\" + name) as key:
+                    path = winreg.QueryValue(key, None).strip('"')
+                    if path and os.path.isfile(path):
+                        return path
+            except OSError:
+                continue
+    return None
+
+
+def resolve_windows_shortcut(lnk_path):
+    """Target of a Windows .lnk shortcut, or None (uses Windows' own shortcut API)."""
+    if not IS_WINDOWS:
+        return None
+    ps_path = lnk_path.replace("'", "''")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                              f"(New-Object -ComObject WScript.Shell).CreateShortcut('{ps_path}').TargetPath"],
+                             capture_output=True, text=True, timeout=20, **NO_WINDOW)
+        target = out.stdout.strip()
+        return target if target and os.path.exists(target) else None
+    except Exception:
+        return None
+
+
+def visit_lookalikes(drive_dir, visit, limit=8):
+    """Names near drive_dir that start with the visit number (any extension) - shown
+    in the log when the visit can't be opened, to make the cause obvious."""
+    found = []
+    for depth in (0, 1, 2):
+        found += glob.glob(os.path.join(drive_dir, *(["*"] * depth), visit + "*"))
+    return found[:limit]
 
 
 def find_visit_dir(drive_dir, visit):
@@ -209,6 +436,14 @@ def find_visit_dir(drive_dir, visit):
             yield from glob.glob(os.path.join(account, "Shared drives", "*", visit))
         for depth in (1, 2, 3):
             yield from glob.glob(os.path.join(drive_dir, *(["*"] * depth), visit))
+        if IS_WINDOWS:
+            # Google Drive for Desktop can show a Drive shortcut (e.g. a visit folder
+            # shared with you) as a Windows shortcut file, "<visit>.lnk" - follow it.
+            for depth in (0, 1, 2):
+                for lnk in glob.glob(os.path.join(drive_dir, *(["*"] * depth), visit + ".lnk")):
+                    target = resolve_windows_shortcut(lnk)
+                    if target:
+                        yield target
 
     fallback = None
     for c in candidates():
@@ -336,6 +571,7 @@ SOFTWARE_INFO = {
     "phenix": ("Phenix", "Fo-Fo difference maps", "https://phenix-online.org/download/"),
     "coot": ("Coot", "map rendering & inspection", "https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/"),
     "dimple": ("Dimple · CCP4", "apo screening", "https://www.ccp4.ac.uk/download/"),
+    "pymol": ("PyMOL", "optional · view results", "https://pymol.org/"),
 }
 DRIVE_DOWNLOAD_URL = "https://www.google.com/drive/download/"
 DRIVE_WEB_URL = "https://drive.google.com/"
@@ -554,6 +790,10 @@ def group_sort_key(info, name):
             len(info["combination"]), info["combination"], info["half"], name)
 
 
+APP_LOGO_NAMES = ["harryspotter_logo.png"]
+LAB_LOGO_NAMES = ["lab_logo.png", "lab_logo", "lab_logo.jpeg", "lab_logo.jpg"]
+
+
 def make_entry(parent, var, width=None, size=11):
     kw = {"width": width} if width else {}
     return tk.Entry(parent, textvariable=var, font=F(size), relief="flat", bg=T["field"], fg=T["text"],
@@ -604,8 +844,8 @@ class ApoInspectorGUI:
 
         self.startup_win = tk.Toplevel(self.root)
         self.startup_win.title("Harry Spotter — Open Project")
-        self.startup_win.geometry("620x540")
-        self.startup_win.minsize(580, 520)
+        self.startup_win.geometry("640x560")
+        self.startup_win.minsize(600, 540)
         self.startup_win.configure(bg=T["bg"])
         self.startup_win.attributes("-topmost", True)
 
@@ -614,15 +854,22 @@ class ApoInspectorGUI:
         inner = tk.Frame(card, bg=T["card"])
         inner.pack(fill="both", expand=True, padx=26, pady=20)
 
-        try:
-            logo_img = Image.open(self.find_logo())
-            logo_img.thumbnail((320, 70))
-            self.startup_logo = ImageTk.PhotoImage(logo_img)
-            tk.Label(inner, image=self.startup_logo, bg=T["card"]).pack(anchor="w", pady=(0, 14))
-        except Exception as e:
-            tk.Label(inner, text=f"⚠️ {e}", font=F(10, "bold"), bg=T["card"], fg=T["bad"]).pack(anchor="w", pady=(0, 14))
+        brand = tk.Frame(inner, bg=T["card"])
+        brand.pack(fill="x")
+        self.startup_icon = self.load_image(APP_LOGO_NAMES, (72, 72))
+        if self.startup_icon:
+            tk.Label(brand, image=self.startup_icon, bg=T["card"]).pack(side="left", padx=(0, 14))
+        names = tk.Frame(brand, bg=T["card"])
+        names.pack(side="left")
+        tk.Label(names, text="Harry Spotter", font=F(24, "bold"), bg=T["card"], fg=T["text"]).pack(anchor="w")
+        tk.Label(names, text="Time-resolved & apo density inspector", font=F(11), bg=T["card"],
+                 fg=T["muted"]).pack(anchor="w")
+        self.startup_logo = self.load_image(LAB_LOGO_NAMES, (190, 64))
+        if self.startup_logo:
+            tk.Label(brand, image=self.startup_logo, bg=T["card"]).pack(side="right")
+        tk.Frame(inner, bg=T["border"], height=1).pack(fill="x", pady=16)
 
-        tk.Label(inner, text="Open a project", font=F(18, "bold"), bg=T["card"], fg=T["text"]).pack(anchor="w")
+        tk.Label(inner, text="Open a project", font=F(16, "bold"), bg=T["card"], fg=T["text"]).pack(anchor="w")
         tk.Label(inner, text="The project folder holds your input/ files and the results of each run.",
                  font=F(11), bg=T["card"], fg=T["muted"]).pack(anchor="w", pady=(2, 16))
 
@@ -675,8 +922,21 @@ class ApoInspectorGUI:
         self.startup_win.protocol("WM_DELETE_WINDOW", self.on_startup_close)
 
     def find_logo(self):
-        possible_names = ["lab_logo.png", "lab_logo", "lab_logo.jpeg", "lab_logo.jpg"]
-        possible_dirs = [os.path.abspath(".")] 
+        return self.find_resource(LAB_LOGO_NAMES)
+
+    def load_image(self, names, box):
+        """PhotoImage of a bundled image scaled to fit `box`, or None."""
+        try:
+            img = Image.open(self.find_resource(names))
+            img.load()
+            img = img.convert("RGBA")
+            img.thumbnail(box, Image.LANCZOS)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            return None
+
+    def find_resource(self, possible_names):
+        possible_dirs = [os.path.dirname(os.path.abspath(__file__)), os.path.abspath(".")]
         
         if hasattr(sys, '_MEIPASS'):
             possible_dirs.append(sys._MEIPASS) 
@@ -692,7 +952,7 @@ class ApoInspectorGUI:
                 if os.path.exists(full_path):
                     return full_path
                     
-        raise FileNotFoundError("Logo not found in Mac Resources folder!")
+        raise FileNotFoundError(f"{possible_names[0]} not found in the app's resources")
 
     def browse_working_dir(self):
         path = filedialog.askdirectory(parent=self.startup_win, title="Select Project Working Directory")
@@ -750,6 +1010,7 @@ class ApoInspectorGUI:
         self.var_dimple = tk.StringVar(value=self.proj_cfg.get("dimple_exe", default_dimple))
         self.var_phenix = tk.StringVar(value=self.proj_cfg.get("phenix_exe", default_phenix))
         self.var_coot = tk.StringVar(value=self.proj_cfg.get("coot_exe", default_coot))
+        self.var_pymol = tk.StringVar(value=self.proj_cfg.get("pymol_exe") or self.auto_find_software("pymol"))
         self.var_residue = tk.StringVar(value=self.proj_cfg.get("residue", ""))
         self.var_chain = tk.StringVar(value=self.proj_cfg.get("chain", "A"))
         self.var_contour = tk.StringVar(value=self.proj_cfg.get("contour", "3.0"))
@@ -790,7 +1051,13 @@ class ApoInspectorGUI:
             drives = [os.environ.get("SystemDrive", "C:") + "\\"]
             bases = drives + [os.environ.get(v, "") for v in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")
                               if os.environ.get(v)] + [os.path.expanduser("~")]
+            if software_type == "pymol":
+                bases.append(os.environ.get("ProgramData", "C:\\ProgramData"))
             patterns = {
+                "pymol": ["PyMOL*\\PyMOLWin.exe", "PyMOL*\\PyMOL.exe", "PyMOL*\\PyMOL*\\PyMOLWin.exe",
+                          "Schrodinger\\PyMOL*\\PyMOLWin.exe", "Schrodinger\\PyMOL*\\PyMOL.exe",
+                          "miniconda3\\Scripts\\pymol.exe", "anaconda3\\Scripts\\pymol.exe",
+                          "miniforge3\\Scripts\\pymol.exe", "mambaforge\\Scripts\\pymol.exe"],
                 "coot": ["WinCoot*\\wincoot.bat", "WinCoot*\\runwincoot.bat", "WinCoot*\\run_coot.bat",
                          "CCP4*\\WinCoot*\\wincoot.bat", "CCP4*\\*\\WinCoot*\\wincoot.bat",
                          "CCP4*\\bin\\wincoot.bat", "CCP4*\\*\\bin\\wincoot.bat",
@@ -802,6 +1069,7 @@ class ApoInspectorGUI:
                            "phenix*\\*\\phenix.fobs_minus_fobs_map.bat"],
             }[software_type]
             on_path = {"coot": ["wincoot.bat", "runwincoot.bat", "run_coot.bat"], "dimple": ["dimple.bat", "dimple"],
+                       "pymol": ["pymol.exe", "pymol", "PyMOLWin.exe"],
                        "phenix": ["phenix.fobs_minus_fobs_map.bat", "phenix.fobs_minus_fobs_map"]}[software_type]
             for name in on_path:
                 if shutil.which(name):
@@ -811,8 +1079,32 @@ class ApoInspectorGUI:
                     found = sorted(glob.glob(os.path.join(base, pattern)))
                     if found:
                         return found[-1]  # newest version by name
+            if software_type == "pymol":
+                found = windows_registered_app(["PyMOLWin.exe", "PyMOL.exe", "pymol.exe"])
+                if found:
+                    return found
+                # Nearly every Windows install adds a Start Menu shortcut - follow it.
+                menus = [os.path.join(os.environ.get(v, ""), "Microsoft", "Windows", "Start Menu", "Programs")
+                         for v in ("ProgramData", "APPDATA") if os.environ.get(v)]
+                for menu in menus:
+                    for lnk in sorted(glob.glob(os.path.join(menu, "**", "*PyMOL*.lnk"), recursive=True)):
+                        target = resolve_windows_shortcut(lnk)
+                        if target and target.lower().endswith(".exe"):
+                            return target
             return on_path[0]
-        else: 
+        else:
+            if software_type == "pymol":
+                # Schrodinger (incentive) app bundles first, then open-source installs
+                apps = sorted(glob.glob("/Applications/PyMOL*.app/Contents/MacOS/PyMOL") +
+                              glob.glob(os.path.expanduser("~/Applications/PyMOL*.app/Contents/MacOS/PyMOL")))
+                if apps: return apps[-1]
+                if shutil.which("pymol"): return shutil.which("pymol")
+                for path in ["/opt/homebrew/bin/pymol", "/usr/local/bin/pymol"] + [
+                        os.path.expanduser(f"~/{d}/bin/pymol")
+                        for d in ("miniconda3", "anaconda3", "miniforge3", "mambaforge")] + ["/opt/anaconda3/bin/pymol"]:
+                    if os.path.exists(path): return path
+                return "pymol"
+
             if software_type == "coot":
                 for path in ["/opt/homebrew/bin/coot-1", "/opt/homebrew/bin/coot", "/usr/local/bin/coot-1", "/usr/local/bin/coot"]:
                     if os.path.exists(path): return path
@@ -854,13 +1146,9 @@ class ApoInspectorGUI:
         # ---------------- HEADER ----------------
         header = tk.Frame(outer, bg=T["bg"])
         header.grid(row=0, column=0, columnspan=2, sticky="we", pady=(0, 12))
-        try:
-            logo_img = Image.open(self.find_logo())
-            logo_img.thumbnail((200, 46))
-            self.header_logo = ImageTk.PhotoImage(logo_img)
-            tk.Label(header, image=self.header_logo, bg=T["bg"]).pack(side="left", padx=(0, 14))
-        except Exception:
-            pass
+        self.header_icon = self.load_image(APP_LOGO_NAMES, (54, 54))
+        if self.header_icon:
+            tk.Label(header, image=self.header_icon, bg=T["bg"]).pack(side="left", padx=(0, 12))
         titles = tk.Frame(header, bg=T["bg"])
         titles.pack(side="left")
         tk.Label(titles, text="Harry Spotter", font=F(20, "bold"), bg=T["bg"], fg=T["text"]).pack(anchor="w")
@@ -872,6 +1160,9 @@ class ApoInspectorGUI:
         self.lbl_readiness = tk.Label(pill, font=F(11, "bold"), bg=T["card"], padx=14, pady=7, cursor="hand2")
         self.lbl_readiness.pack()
         self.lbl_readiness.bind("<Button-1>", lambda e: self.show_issues())
+        self.header_logo = self.load_image(LAB_LOGO_NAMES, (150, 48))
+        if self.header_logo:
+            tk.Label(header, image=self.header_logo, bg=T["bg"]).pack(side="right", padx=(0, 16))
 
         # ---------------- MODE SWITCH ----------------
         mode_bar = tk.Frame(outer, bg=T["bg"])
@@ -963,11 +1254,12 @@ class ApoInspectorGUI:
         sw.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=(0, 12))
         FlatButton(sw.actions, "↻  Re-check", self.recheck_software, style="ghost", size=10, padx=8, pady=3).pack()
         self.sw_rows = {}
-        for i, key in enumerate(("phenix", "coot", "dimple")):
+        for i, key in enumerate(("phenix", "coot", "dimple", "pymol")):
             name, purpose, url = SOFTWARE_INFO[key]
             row = tk.Frame(sw.body, bg=T["card"])
             row.pack(fill="x", pady=3)
-            var = {"phenix": self.var_phenix, "coot": self.var_coot, "dimple": self.var_dimple}[key]
+            var = {"phenix": self.var_phenix, "coot": self.var_coot, "dimple": self.var_dimple,
+                   "pymol": self.var_pymol}[key]
             # Buttons are packed first so they keep their space when the
             # status text is long.
             locate = FlatButton(row, "Locate…", lambda v=var: self.browse(v, False), style="ghost", size=10,
@@ -989,6 +1281,7 @@ class ApoInspectorGUI:
         self.path_row(sw_adv.body, 0, "phenix_path", "Phenix", self.var_phenix, is_dir=False)
         self.path_row(sw_adv.body, 1, "coot_path", "Coot", self.var_coot, is_dir=False)
         self.path_row(sw_adv.body, 2, "dimple_path", "Dimple", self.var_dimple, is_dir=False)
+        self.path_row(sw_adv.body, 3, "pymol_path", "PyMOL", self.var_pymol, is_dir=False)
 
         # ---------------- BENTO: INPUTS ----------------
         inputs = Card(bento, "📄  Inputs", "Pulled from the visit folder when available")
@@ -1066,7 +1359,8 @@ class ApoInspectorGUI:
 
         # ---------------- LIVE STATUS ----------------
         for var in (self.var_model, self.var_mtz, self.var_apo_mtz, self.var_out, self.var_phenix, self.var_coot,
-                    self.var_dimple, self.var_residue, self.var_contour, self.var_drive_source, self.var_chain):
+                    self.var_dimple, self.var_residue, self.var_contour, self.var_drive_source, self.var_chain,
+                    self.var_pymol):
             var.trace_add("write", lambda *a: self.schedule_refresh())
         self.root.bind_all("<Control-r>" if IS_WINDOWS else "<Command-r>",
                            lambda e: self.start_pipeline() if self.btn_run._enabled else None)
@@ -1230,8 +1524,9 @@ class ApoInspectorGUI:
             self.btn_drive_setup.pack()
 
         # Software
-        for key, var in (("phenix", self.var_phenix), ("coot", self.var_coot), ("dimple", self.var_dimple)):
-            needed = key == "coot" or key == mode
+        for key, var in (("phenix", self.var_phenix), ("coot", self.var_coot), ("dimple", self.var_dimple),
+                         ("pymol", self.var_pymol)):
+            needed = key == "coot" or key == mode   # PyMOL is optional: never blocks a run
             found = tool_available(var.get())
             row = self.sw_rows[key]
             if found:
@@ -1241,9 +1536,10 @@ class ApoInspectorGUI:
             else:
                 self.set_dot(key, "bad" if needed else "idle")
                 row["state"].config(text="Not installed — download needed" if needed
+                                    else "Not installed  ·  optional, for viewing results" if key == "pymol"
                                     else "Not installed  ·  not needed in this mode",
                                     fg=T["bad"] if needed else T["muted"])
-                if needed:
+                if needed or key == "pymol":
                     row["download"].pack(side="right", padx=(6, 0), before=row["locate"])
                 else:
                     row["download"].pack_forget()
@@ -1272,7 +1568,8 @@ class ApoInspectorGUI:
 
     def recheck_software(self):
         """Re-detect any tool that isn't found (e.g. just installed)."""
-        for key, var in (("phenix", self.var_phenix), ("coot", self.var_coot), ("dimple", self.var_dimple)):
+        for key, var in (("phenix", self.var_phenix), ("coot", self.var_coot), ("dimple", self.var_dimple),
+                         ("pymol", self.var_pymol)):
             if not tool_available(var.get()):
                 found = self.auto_find_software(key)
                 if tool_available(found):
@@ -1398,6 +1695,7 @@ class ApoInspectorGUI:
                 "dimple_exe": self.var_dimple.get().strip(),
                 "phenix_exe": self.var_phenix.get().strip(),
                 "coot_exe": self.var_coot.get().strip(),
+                "pymol_exe": self.var_pymol.get().strip(),
                 "residue": self.var_residue.get().strip(),
                 "chain": self.var_chain.get().strip(),
                 "log_height": getattr(self, "log_height", 320),
@@ -1500,6 +1798,14 @@ class ApoInspectorGUI:
                 self.log(f"❌ Could not find visit folder '{visit}' under {drive_dir} "
                          f"(or in folders shared with you). Check the visit number, or point "
                          f"Google Drive Source at the folder containing it.")
+                looks = visit_lookalikes(drive_dir, visit)
+                if looks:
+                    self.log("  Found these with that name, but couldn't open them as the visit folder: "
+                             + "; ".join(looks))
+                self.log(f"  Searched: {drive_dir} (3 levels down)"
+                         + "".join(f"; {r}.shortcut-targets-by-id; {r}Shared drives"
+                                   if r.endswith(os.sep) else f"; {os.path.join(r, '.shortcut-targets-by-id')}"
+                                   for r in google_drive_roots()))
                 return
             self.visit_dir_cache = visit_dir
 
@@ -1634,7 +1940,7 @@ class ApoInspectorGUI:
         self.root.after(0, self._append_log, msg)
         try:
             log_file = os.path.join(self.var_out.get(), "pipeline_run.log")
-            with open(log_file, "a") as f: f.write(msg)
+            with open(log_file, "a", encoding="utf-8") as f: f.write(msg)
         except: pass
 
     def _append_log(self, msg):
@@ -1691,10 +1997,14 @@ class ApoInspectorGUI:
         self.processed_datasets = []
         self.radio_vars.clear()
 
+        no_map = []
         for d_dir in run_dirs:
             if not os.path.isdir(d_dir): continue
             
             base_name = os.path.basename(d_dir).replace("dimple_", "").replace("phenix_", "")
+            if not (os.path.exists(os.path.join(d_dir, "final.mtz")) and os.path.exists(os.path.join(d_dir, "final.pdb"))):
+                no_map.append(base_name)   # Phenix/Dimple failed for this one: nothing to show or open
+                continue
             
             # --- FIXED: Corrected the filename search to successfully find "_spin.gif" instead of ".gif" ---
             gif_path = os.path.join(out_dir, f"{base_name}_spin.gif")
@@ -1708,6 +2018,12 @@ class ApoInspectorGUI:
             })
         
         self.processed_datasets.sort(key=lambda x: x["base_name"])
+        if no_map:
+            self.log(f"  {len(no_map)} dataset folder(s) have no map (Phenix/Dimple failed for them, "
+                     f"e.g. non-isomorphous) and are not shown: " + ", ".join(sorted(no_map)))
+        if not self.processed_datasets:
+            messagebox.showinfo("No Results", f"No completed datasets found in:\n{out_dir}")
+            return
         self.var_out.set(out_dir)
         self.log(f"📂 Successfully loaded {len(self.processed_datasets)} datasets from {os.path.basename(out_dir)}.")
         
@@ -1912,11 +2228,18 @@ except: pass
 try: set_environment_distances_distance_limits(0.0, 0.01)
 except: pass
 
+try: set_background_colour(0.0, 0.0, 0.0)
+except: pass
+
 def flush_graphics():
+    # GTK 3 Coot only. Deliberately not re-entering the GLib main loop here:
+    # this script runs inside it, and re-entering crashes Coot 1.x. Frame
+    # capture below is scheduled on the main loop instead.
     try:
         from gi.repository import Gtk
         while Gtk.events_pending(): Gtk.main_iteration()
-    except: pass
+    except Exception:
+        pass
 
 try:
     imol_pdb = read_pdb(r'{safe_pdb}')
@@ -1946,7 +2269,6 @@ try:
             except: pass
         
     flush_graphics()
-    time.sleep(1.0)
     
     if map_imol is None or map_imol < 0:
         try:
@@ -1996,66 +2318,163 @@ try:
     set_zoom(20) 
     set_draw_axes(0)
     
-    for _ in range(20):
-        flush_graphics()
-        time.sleep(0.1)
-    
-    # 24 frames of 15 degrees = smooth 360 degree GIF rotation
-    for i in range(24):
-        angle = math.radians(i * 15)
-        # Apply Y-Axis quaternion rotation
-        try: set_view_quaternion(0.0, math.sin(angle / 2.0), 0.0, math.cos(angle / 2.0))
-        except: pass
-        
-        graphics_draw()
-        flush_graphics()
-        time.sleep(0.3) 
-        
-        frame_path = r'{safe_png_prefix}' + f"_{{i}}.png"
-        try: screendump_image(frame_path)
-        except Exception as e: print("Screendump failed:", e)
-
+    SETUP_OK = True
 except Exception as e: 
+    SETUP_OK = False
     print("CRITICAL COOT SCRIPT ERROR:", e)
     import traceback
     traceback.print_exc()
 
-coot_real_exit(0)
+# 24 frames of 15 degrees = smooth 360 degree GIF rotation.
+# Frames are captured from Coot's own event loop: set the view, give the main
+# loop time to actually draw it, then take the screenshot. (time.sleep() here
+# would freeze drawing, which gives black or garbage frames on some systems.)
+N_FRAMES = 24
+WARMUP_MS = 1000    # let Coot show its window and draw the maps once
+FRAME_MS = 80       # per frame: time to redraw before the screenshot
+                    # (screenshots take ~10 ms; HS_TIMING lines in the Coot log show the real cost)
+frame_no = [0]
+T_START = time.time()
+import sys
+print("HS_TIMING script started")
+sys.stdout.flush()
+
+def set_frame_view(i):
+    angle = math.radians(i * 15)
+    try: set_view_quaternion(0.0, math.sin(angle / 2.0), 0.0, math.cos(angle / 2.0))
+    except: pass
+    try: graphics_draw()
+    except: pass
+
+def capture_frame():
+    try:
+        i = frame_no[0]
+        frame_path = r'{safe_png_prefix}' + "_%d.png" % i
+        t_shot = time.time()
+        try: screendump_image(frame_path)
+        except Exception as e: print("Screendump failed:", e)
+        print("HS_TIMING frame %d: screenshot %.0f ms, %.1f s since script start"
+              % (i, (time.time() - t_shot) * 1000, time.time() - T_START))
+        sys.stdout.flush()
+        frame_no[0] = i + 1
+        if frame_no[0] >= N_FRAMES:
+            coot_real_exit(0)
+            return False
+        set_frame_view(frame_no[0])
+        return True           # run again after FRAME_MS
+    except Exception as e:
+        print("CAPTURE ERROR:", e)
+        coot_real_exit(0)
+        return False
+
+def start_capture():
+    GLib.timeout_add(FRAME_MS, capture_frame)
+    return False
+
+if not SETUP_OK:
+    coot_real_exit(0)
+else:
+    try:
+        from gi.repository import GLib
+        set_frame_view(0)
+        GLib.timeout_add(WARMUP_MS, start_capture)
+        GLib.timeout_add_seconds(180, lambda: coot_real_exit(0))   # never hang the pipeline
+    except ImportError:
+        # No GLib bindings: fall back to the old sequential capture.
+        for _ in range(20):
+            flush_graphics()
+            time.sleep(0.1)
+        for i in range(N_FRAMES):
+            set_frame_view(i)
+            for _ in range(5):
+                flush_graphics()
+                time.sleep(0.08)
+            frame_path = r'{safe_png_prefix}' + "_%d.png" % i
+            try: screendump_image(frame_path)
+            except Exception as e: print("Screendump failed:", e)
+        coot_real_exit(0)
 """
                 temp_py = os.path.join(abs_out_dir, "temp_render.py")
                 with open(temp_py, "w") as f:
                     f.write(coot_script)
                     
+                timed_out = False
+                started = time.time()
                 with open(coot_log, "w") as c_log:
                     if self.is_windows:
                         win_cmd = f'"{coot_exe}" --no-state-script --script "{temp_py}"'
-                        subprocess.run(win_cmd, stdout=c_log, stderr=subprocess.STDOUT, shell=True, **NO_WINDOW)
+                        proc = subprocess.Popen(win_cmd, stdout=c_log, stderr=subprocess.STDOUT, shell=True,
+                                                env=coot_env(), **NO_WINDOW)
                     else:
                         ccp4_setup_path = ""
                         potential_setups = glob.glob("/Applications/ccp4-*/bin/ccp4.setup-sh")
                         if potential_setups: ccp4_setup_path = potential_setups[0]
                         source_cmd = f"source '{ccp4_setup_path}' >/dev/null 2>&1; " if ccp4_setup_path else ""
                         mac_cmd = f"{source_cmd}'{coot_exe}' --no-state-script --script '{temp_py}'"
-                        subprocess.run(['/bin/zsh', '-l', '-c', mac_cmd], stdout=c_log, stderr=subprocess.STDOUT)
-                
+                        proc = subprocess.Popen(['/bin/zsh', '-l', '-c', mac_cmd], stdout=c_log,
+                                                stderr=subprocess.STDOUT, start_new_session=True)
+                    # Coot's own script can't enforce a time limit if Coot never gets far
+                    # enough to run it (e.g. no OpenGL), so the app enforces one.
+                    try:
+                        proc.wait(timeout=COOT_RENDER_TIMEOUT)
+                    except subprocess.TimeoutExpired:
+                        timed_out = True
+                        kill_process_tree(proc)
+
                 if os.path.exists(temp_py): os.remove(temp_py)
-                
+
+                gl_problem = coot_opengl_failed(coot_log)
+                if (not gl_problem and not timed_out and time.time() - started < 20
+                        and not glob.glob(d['png_prefix'] + "_*")):
+                    gl_problem = "Coot closed within seconds of starting, without drawing anything"
+                if gl_problem == "Vulkan graphics failed to start" and glob.glob(d['png_prefix'] + "_*"):
+                    gl_problem = None  # just a warning: Coot fell back and still rendered
+                if timed_out:
+                    self.log(f"  ⚠ Coot didn't finish within {COOT_RENDER_TIMEOUT // 60} minutes, so it was closed.")
+                if gl_problem:
+                    self.log(f"  ❌ Coot couldn't render on this computer ({gl_problem}), so no spin GIFs can be made "
+                             f"here. This is usually a graphics (OpenGL) problem, common in virtual machines. "
+                             f"The difference maps are still in the results folder - review them in the Results "
+                             f"window with Open in Coot on a computer with working graphics, or set the Coot "
+                             f"path to a Coot that can draw here (e.g. WinCoot 0.9).")
+                    self.log("  Skipping the remaining renders.")
+                    for rest in local_processed_datasets[local_processed_datasets.index(d):]:
+                        rest.setdefault('gif', None)
+                    break
+
                 # Assembly Phase: Combine 24 Coot frames into a single smooth animated GIF
-                frames = []
+                frames, frame_files, blank = [], [], 0
                 for i in range(24):
                     tga_path = d['png_prefix'] + f"_{i}.png.tga"
                     png_path = d['png_prefix'] + f"_{i}.png"
-                    
+
                     actual_path = tga_path if os.path.exists(tga_path) else (png_path if os.path.exists(png_path) else None)
-                    
+
                     if actual_path:
                         try:
                             img = Image.open(actual_path)
-                            frames.append(img.copy())
+                            frame = img.convert("RGB")
                             img.close()
-                            os.remove(actual_path)
+                            frame_files.append(actual_path)
+                            if frame.convert("L").getextrema()[1] < 12:
+                                blank += 1  # all black: Coot hadn't drawn anything
+                            else:
+                                frames.append(frame)
                         except: pass
-                
+
+                if blank or len(frame_files) < 24:
+                    # Keep the raw frames and say so, rather than silently making a bad GIF.
+                    keep_dir = os.path.join(abs_out_dir, f"coot_frames_{d['base_name']}")
+                    os.makedirs(keep_dir, exist_ok=True)
+                    for fpath in frame_files:
+                        shutil.move(fpath, os.path.join(keep_dir, os.path.basename(fpath)))
+                    self.log(f"  ⚠ {len(frame_files)} of 24 frames captured, {blank} blank for {d['base_name']}. "
+                             f"Raw frames kept in {os.path.basename(keep_dir)}/ - see coot_{d['base_name']}.log")
+                else:
+                    for fpath in frame_files:
+                        try: os.remove(fpath)
+                        except OSError: pass
+
                 if frames:
                     gif_path = d['png_prefix'] + ".gif"
                     frames[0].save(gif_path, save_all=True, append_images=frames[1:], duration=250, loop=0)
@@ -2151,6 +2570,46 @@ coot_real_exit(0)
             except Exception as e:
                 messagebox.showerror("Error", f"Could not save GIF:\n{e}")
 
+    def open_in_pymol(self, d):
+        """Open a dataset's model and maps in PyMOL, centred on the target residue."""
+        pymol_exe = self.var_pymol.get().strip()
+        if not tool_available(pymol_exe):
+            found = self.auto_find_software("pymol")
+            if tool_available(found):
+                self.var_pymol.set(found)
+                pymol_exe = found
+                self.persist_state()
+            else:
+                messagebox.showinfo("PyMOL not found",
+                                    "Harry Spotter couldn't find PyMOL on this computer.\n\n"
+                                    "Install it from pymol.org, or if it's already installed, set its location in "
+                                    "the Software card (Locate… next to PyMOL).",
+                                    parent=self.results_window or self.root)
+                return
+        if not (os.path.exists(d['pdb']) and os.path.exists(d['mtz'])):
+            messagebox.showerror("Files missing", f"Can't find this dataset's model and map files:\n"
+                                                  f"{d['pdb']}\n{d['mtz']}", parent=self.results_window or self.root)
+            return
+
+        folder = os.path.dirname(d['pdb'])
+        name = re.sub(r"\W", "_", d['base_name'])[:40].strip("_") or "dataset"
+        if name[0].isdigit():
+            name = "d_" + name
+        maps, problem = make_ccp4_maps(d['mtz'], folder, name,
+                                       gemmi_hints=(self.var_dimple.get().strip(), self.var_coot.get().strip()))
+        script = pymol_script(d['pdb'], d['mtz'], maps, name, self.var_chain.get().strip(),
+                              self.var_residue.get().strip(), d.get('contour', self.var_contour.get()) or "3.0")
+        script_path = os.path.join(folder, "open_in_pymol.py")
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(script)
+        try:
+            subprocess.Popen([pymol_exe, script_path], cwd=folder)
+        except Exception as e:
+            messagebox.showerror("PyMOL", f"Couldn't start PyMOL:\n{e}", parent=self.results_window or self.root)
+            return
+        self.log(f"🔬 Opening {d['base_name']} in PyMOL" +
+                 (f" - note: {problem}; asking PyMOL to read the MTZ directly" if problem else ""))
+
     def open_in_coot(self, d):
         coot_exe = self.var_coot.get().strip()
         target_res = self.var_residue.get().strip()
@@ -2169,6 +2628,9 @@ coot_real_exit(0)
         coot_script = f"""
 from coot import *
 import time
+
+try: set_background_colour(0.0, 0.0, 0.0)
+except: pass
 
 try:
     imol_pdb = read_pdb(r'{safe_pdb}')
@@ -2219,7 +2681,7 @@ except Exception as e:
             # WinCoot expects forward slashes even in command-line arguments
             safe_script_path = script_path.replace('\\', '/')
             win_cmd = f'"{coot_exe}" --script "{safe_script_path}"'
-            subprocess.Popen(win_cmd, shell=True)
+            subprocess.Popen(win_cmd, shell=True, env=coot_env())
         else:
             ccp4_setup_path = ""
             potential_setups = glob.glob("/Applications/ccp4-*/bin/ccp4.setup-sh")
@@ -2388,6 +2850,8 @@ except Exception as e:
         tk.Frame(side, bg=T["card"]).pack(fill="both", expand=True)
         FlatButton(side, "🐸  Open in Coot", lambda: self.open_in_coot(d), style="secondary", size=10,
                    pady=5).pack(fill="x", pady=(0, 6))
+        FlatButton(side, "🔬  Open in PyMOL", lambda: self.open_in_pymol(d), style="secondary", size=10,
+                   pady=5).pack(fill="x", pady=(0, 6))
         if d.get('gif') and os.path.exists(d['gif']):
             FlatButton(side, "💾  Save GIF", lambda: self.save_gif_copy(d['gif'], name), style="ghost",
                        size=10, pady=4).pack(fill="x")
@@ -2461,5 +2925,13 @@ if __name__ == "__main__":
             root.iconbitmap(default=os.path.join(base, "logo.ico"))
         except tk.TclError:
             pass
+    try:
+        base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+        icon = Image.open(os.path.join(base, "harryspotter_logo.png"))
+        icon.thumbnail((256, 256))
+        root._app_icon = ImageTk.PhotoImage(icon)
+        root.iconphoto(True, root._app_icon)
+    except Exception:
+        pass
     app = ApoInspectorGUI(root)
     root.mainloop()

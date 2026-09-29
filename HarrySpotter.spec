@@ -5,7 +5,7 @@ a = Analysis(
     ['HarrySpotter.py'],
     pathex=[],
     binaries=[],
-    datas=[('lab_logo.png', '.'), ('logo.icns', '.')],
+    datas=[('lab_logo.png', '.'), ('harryspotter_logo.png', '.'), ('logo.icns', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

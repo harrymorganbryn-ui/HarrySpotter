@@ -4,6 +4,10 @@ rem Result: dist\HarrySpotter\HarrySpotter.exe
 setlocal
 cd /d "%~dp0"
 
+rem Double-clicking this inside a zip runs it alone from a temp folder, without the other files.
+if not exist "HarrySpotter.py" goto :notextracted
+if not exist "make_icon.py" goto :notextracted
+
 set "PY="
 where py >nul 2>nul && set "PY=py -3"
 if not defined PY (where python >nul 2>nul && set "PY=python")
@@ -32,6 +36,14 @@ echo  BUILD DONE:  dist\HarrySpotter\HarrySpotter.exe
 echo ==========================================================
 pause
 exit /b 0
+
+:notextracted
+echo.
+echo This looks like it was opened from inside a zip file.
+echo Right-click the zip, choose "Extract All...", then run build_windows.bat
+echo from the extracted HarrySpotter folder.
+pause
+exit /b 1
 
 :nopython
 echo.

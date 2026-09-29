@@ -12,8 +12,8 @@ authors:
   - family-names: Morgan
     given-names: Harry
     affiliation: University of Bath
-version: "3.1"
-date-released: 2026-09-28
+version: "3.2"
+date-released: 2026-09-29
 doi: 10.5281/zenodo.23020039
 identifiers:
   - type: doi
