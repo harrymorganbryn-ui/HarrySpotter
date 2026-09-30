@@ -13,12 +13,14 @@ out = sys.argv[2]
 os.makedirs(out, exist_ok=True)
 script = os.path.join(out, "probe.py")
 open(script, "w").write(f'''
+from coot import *
 import coot, time, sys
+from gi.repository import GLib
+GLib.timeout_add_seconds(60, lambda: coot_real_exit(0))   # never hang
 names = sorted(n for n in dir(coot) if any(k in n.lower() for k in ("framebuffer", "screendump", "screenshot", "image", "offscreen")))
 print("PROBE_NAMES", names); sys.stdout.flush()
 read_pdb({os.path.join(data, "phenix", "final.pdb")!r})
 make_and_draw_map({os.path.join(data, "phenix", "final.mtz")!r}, "FoFo", "PHFc", "", 0, 0)
-from gi.repository import GLib
 def shots():
     try:
         screendump_image({os.path.join(out, "fb_on.png")!r}); print("PROBE_SHOT fb_on done")
@@ -42,9 +44,14 @@ def second():
     return False
 GLib.timeout_add(1500, shots)
 ''')
-r = subprocess.run(["coot", "--no-state-script", "--script", script], capture_output=True, text=True, timeout=180)
-log = r.stdout + r.stderr
-open(os.path.join(out, "probe.log"), "w").write(log)
+logfile = os.path.join(out, "probe.log")
+with open(logfile, "w") as fh:
+    try:
+        subprocess.run(["coot", "--no-state-script", "--script", script], stdout=fh, stderr=subprocess.STDOUT,
+                       timeout=150)
+    except subprocess.TimeoutExpired:
+        print("PROBE coot timed out")
+log = open(logfile, errors="replace").read()
 for line in log.splitlines():
     if line.startswith("PROBE_") or "glnamedreadbuffer" in line or "use_framebuffers" in line:
         print(line[:400])
