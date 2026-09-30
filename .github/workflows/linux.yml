@@ -37,7 +37,7 @@ jobs:
   test:
     # Debian packages Coot 1 (1.1.x), PyMOL and gemmi; Ubuntu 24.04 has no Coot.
     runs-on: ubuntu-24.04
-    container: debian:sid
+    container: debian:trixie
     steps:
       - uses: actions/checkout@v4
       - name: Install Coot 1, PyMOL, gemmi and a virtual display

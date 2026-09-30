@@ -32,6 +32,30 @@ IS_MAC = sys.platform == "darwin"
 IS_LINUX = not IS_WINDOWS and not IS_MAC
 COMPUTER = "PC" if IS_WINDOWS else "Mac" if IS_MAC else "computer"
 FILE_BROWSER = "File Explorer" if IS_WINDOWS else "Finder" if IS_MAC else "your file manager"
+if IS_LINUX:
+    # Tk on Linux can't draw colour emoji (they show as empty boxes), so strip
+    # them from widget text there; plain symbols such as ✓ ☁ ⏱ still show.
+    _EMOJI = re.compile("[\U00010000-\U0010FFFF]\uFE0F?")
+
+    def plain_text(text):
+        return _EMOJI.sub("", text).lstrip() if isinstance(text, str) else text
+
+    for _cls in (tk.Label, tk.Checkbutton, tk.Button):
+        def _init(self, master=None, cnf={}, _orig=_cls.__init__, **kw):
+            if "text" in kw:
+                kw["text"] = plain_text(kw["text"])
+            _orig(self, master, cnf, **kw)
+
+        def _configure(self, cnf=None, _orig=_cls.configure, **kw):
+            if "text" in kw:
+                kw["text"] = plain_text(kw["text"])
+            return _orig(self, cnf, **kw)
+        _cls.__init__ = _init
+        _cls.configure = _cls.config = _configure
+else:
+    def plain_text(text):
+        return text
+
 # Shell used to run CCP4/Phenix/Coot on macOS and Linux (many Linux systems have no zsh).
 LOGIN_SHELL = ["/bin/zsh", "-l", "-c"] if IS_MAC else ["/bin/bash", "-l", "-c"]
 # Hide the console window that would otherwise flash up for every
@@ -2057,6 +2081,8 @@ class ApoInspectorGUI:
             tag = "head"
         else:
             tag = None
+        if IS_LINUX:
+            msg = plain_text(msg.replace("✅", "✓").replace("❌", "✗").replace("⚠", "!")) if msg.strip() else msg
         self.console.insert(tk.END, msg, tag)
         self.console.see(tk.END)
         if tag == "err" and self.log_collapsed:
