@@ -5,7 +5,7 @@
 #   Result: HarrySpotter-<version>-Linux-<arch>.tar.gz
 set -e
 cd "$(dirname "$0")"
-VERSION="${VERSION:-3.3}"
+VERSION="${VERSION:-3.4}"
 ARCH="$(uname -m)"
 
 python3 -m PyInstaller --noconfirm HarrySpotter-linux.spec

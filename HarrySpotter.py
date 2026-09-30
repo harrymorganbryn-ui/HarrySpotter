@@ -217,13 +217,41 @@ def choose_fobs_label(path):
 COOT_RENDER_TIMEOUT = 300   # seconds; a normal render takes ~15-30 s
 
 
+def tool_env():
+    """Environment for the programs Harry Spotter starts (Phenix, Dimple, Coot,
+    PyMOL, gemmi): the user's normal environment, as if the program had been
+    started by hand. The packaged app adds some settings of its own for its
+    bundled Python/Tcl/Tk (on Linux also a library path into its own files);
+    passed on, those can make other programs load the wrong libraries or run
+    their setup steps again, so they are removed or restored here."""
+    env = dict(os.environ)
+    if not getattr(sys, "frozen", False):
+        return env
+    bundle = getattr(sys, "_MEIPASS", "") or os.path.dirname(sys.executable)
+    for key in list(env):
+        if key.startswith("_PYI_") or key == "_MEIPASS2":
+            del env[key]
+    for key in ("TCL_LIBRARY", "TK_LIBRARY", "TCLLIBPATH", "TKPATH", "PYTHONHOME", "PYTHONPATH"):
+        if bundle and env.get(key, "").startswith(bundle):
+            del env[key]
+    for key in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"):
+        original = env.pop(key + "_ORIG", None)   # PyInstaller keeps the user's value here
+        if original is not None:
+            env[key] = original
+        elif bundle and bundle in env.get(key, ""):
+            del env[key]
+    if bundle and env.get("PATH"):
+        env["PATH"] = os.pathsep.join(p for p in env["PATH"].split(os.pathsep) if not p.startswith(bundle))
+    return env
+
+
 def coot_env():
     """Environment for launching Coot. On Windows, Coot 1 (GTK 4) tries Vulkan
     first when a Vulkan driver is present; in some setups (e.g. virtual
     machines with Microsoft's OpenCL/OpenGL/Vulkan Compatibility Pack) that
     fails and Coot quits at once. Skipping Vulkan makes GTK use OpenGL, as it
     does on ordinary PCs. A value the user has set themselves is kept."""
-    env = dict(os.environ)
+    env = tool_env()
     if IS_WINDOWS:
         env.setdefault("GDK_DISABLE", "vulkan")
     return env
@@ -367,7 +395,7 @@ def make_ccp4_maps(mtz, folder, name, gemmi_hints=()):
                 ccp4.write_ccp4_map(out)
             elif gemmi_exe:
                 subprocess.run([gemmi_exe, "sf2map", "-f", f_col, "-p", phi_col, "-s", "3", mtz, out],
-                               capture_output=True, timeout=120, check=True, **NO_WINDOW)
+                               capture_output=True, timeout=120, check=True, env=tool_env(), **NO_WINDOW)
             else:
                 raise FileNotFoundError("gemmi (part of CCP4) not found")
             maps.append((kind, out, f_col, phi_col))
@@ -2247,10 +2275,10 @@ class ApoInspectorGUI:
                     
                     with open(phenix_log, "w") as p_log:
                         if self.is_windows:
-                            subprocess.run(cmd, stdout=p_log, stderr=subprocess.STDOUT, shell=True, cwd=phenix_out, **NO_WINDOW)
+                            subprocess.run(cmd, stdout=p_log, stderr=subprocess.STDOUT, shell=True, cwd=phenix_out, env=tool_env(), **NO_WINDOW)
                         else:
                             mac_cmd = f'{cmd}'
-                            subprocess.run(LOGIN_SHELL + [mac_cmd], stdout=p_log, stderr=subprocess.STDOUT, cwd=phenix_out)
+                            subprocess.run(LOGIN_SHELL + [mac_cmd], stdout=p_log, stderr=subprocess.STDOUT, cwd=phenix_out, env=tool_env())
                             
                     raw_mtz_1 = os.path.join(phenix_out, "FoFoPHFc.mtz")
                     raw_mtz_2 = os.path.join(phenix_out, "fobs_minus_fobs_map.mtz")
@@ -2303,11 +2331,11 @@ class ApoInspectorGUI:
                     with open(dimple_log, "w") as d_log:
                         if self.is_windows:
                             win_cmd = f'"{dimple_exe}" "{mtz}" "{abs_model}" "{dimple_out}"'
-                            subprocess.run(win_cmd, stdout=d_log, stderr=subprocess.STDOUT, shell=True, **NO_WINDOW)
+                            subprocess.run(win_cmd, stdout=d_log, stderr=subprocess.STDOUT, shell=True, env=tool_env(), **NO_WINDOW)
                         else:
                             source_cmd = f"source '{ccp4_setup_path}' >/dev/null 2>&1; " if ccp4_setup_path else ""
                             mac_cmd = f"{source_cmd}'{dimple_exe}' '{mtz}' '{abs_model}' '{dimple_out}'"
-                            subprocess.run(LOGIN_SHELL + [mac_cmd], stdout=d_log, stderr=subprocess.STDOUT)
+                            subprocess.run(LOGIN_SHELL + [mac_cmd], stdout=d_log, stderr=subprocess.STDOUT, env=tool_env())
                     
                     abs_final_pdb = os.path.join(dimple_out, "final.pdb")
                     abs_final_mtz = os.path.join(dimple_out, "final.mtz")
@@ -2548,7 +2576,7 @@ else:
                         if potential_setups: ccp4_setup_path = potential_setups[0]
                         source_cmd = f"source '{ccp4_setup_path}' >/dev/null 2>&1; " if ccp4_setup_path else ""
                         mac_cmd = f"{source_cmd}'{coot_exe}' --no-state-script --script '{temp_py}'"
-                        proc = subprocess.Popen(LOGIN_SHELL + [mac_cmd], stdout=c_log,
+                        proc = subprocess.Popen(LOGIN_SHELL + [mac_cmd], stdout=c_log, env=coot_env(),
                                                 stderr=subprocess.STDOUT, start_new_session=True)
                     # Coot's own script can't enforce a time limit if Coot never gets far
                     # enough to run it (e.g. no OpenGL), so the app enforces one.
@@ -2749,7 +2777,7 @@ else:
         log_path = os.path.join(folder, "open_in_pymol.log")
         try:
             with open(log_path, "w") as log_file:
-                proc = subprocess.Popen([pymol_exe, script_path], cwd=folder, stdout=log_file,
+                proc = subprocess.Popen([pymol_exe, script_path], cwd=folder, stdout=log_file, env=tool_env(),
                                         stderr=subprocess.STDOUT)
         except Exception as e:
             messagebox.showerror("PyMOL", f"Couldn't start PyMOL:\n{pymol_exe}\n\n{e}",
@@ -2856,7 +2884,7 @@ except Exception as e:
             if potential_setups: ccp4_setup_path = potential_setups[0]
             source_cmd = f"source '{ccp4_setup_path}' >/dev/null 2>&1; " if ccp4_setup_path else ""
             mac_cmd = f"{source_cmd}'{coot_exe}' --script '{script_path}'"
-            subprocess.Popen(LOGIN_SHELL + [mac_cmd])
+            subprocess.Popen(LOGIN_SHELL + [mac_cmd], env=coot_env())
 
     ASSESSMENTS = {
         # value: (button text, colour key, soft background)

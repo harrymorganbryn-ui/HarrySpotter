@@ -71,7 +71,8 @@ On an Intel Mac, [build from source](#building).
 
 ### Windows 10/11
 
-1. Download `HarrySpotter-<version>-Windows.zip`.
+1. Download `HarrySpotter-<version>-Windows-x64.zip` — or `-Windows-ARM64.zip` for an ARM-based
+   PC (e.g. Snapdragon / Copilot+; check **Settings → System → About → System type**).
 2. Right-click it → **Extract All…** into a folder you can write to, such as
    Documents (not Program Files).
 3. Open the extracted folder and double-click `HarrySpotter.exe`. If

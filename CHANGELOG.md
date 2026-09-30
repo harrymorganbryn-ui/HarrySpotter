@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.4 (in testing)
+- **Windows ARM64** build (native, for Snapdragon / Copilot+ PCs) alongside x64.
+- Programs started by Harry Spotter (Phenix, Dimple, Coot, PyMOL, gemmi) get a clean
+  environment, as if started by hand: the packaged app's own Python/Tcl/Tk settings (and
+  on Linux its library path) are no longer passed on to them.
+- Windows x64 and ARM64 builds are made and checked on GitHub Actions, like Linux.
+
 ## 3.3
 - **Linux support** (x86-64): settings in `~/.config`, Linux fonts and mouse wheel,
   Ctrl+R, tools run through bash, and CCP4 / Coot / Phenix / PyMOL / gemmi found in the

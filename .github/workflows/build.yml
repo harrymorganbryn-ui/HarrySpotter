@@ -1,0 +1,122 @@
+name: Build and test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release-test]
+
+env:
+  VERSION: "3.4"
+
+jobs:
+  linux-build:
+    # Built on the older Ubuntu so it also runs on 22.04 and newer.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk python3-pip xvfb
+          python3 -m pip install --user pyinstaller pillow
+      - name: Build and package
+        run: bash build_linux.sh
+      - name: Check the packaged app starts
+        run: |
+          mkdir smoke
+          tar -xzf HarrySpotter-$VERSION-Linux-x86_64.tar.gz -C smoke
+          cd smoke/HarrySpotter-$VERSION
+          ls
+          xvfb-run -a -s "-screen 0 1400x1000x24" bash -c \
+            './HarrySpotter > run.log 2>&1 & PID=$!; sleep 12;
+             if kill -0 $PID 2>/dev/null; then echo "APP RUNNING"; kill $PID;
+             else echo "APP EXITED"; cat run.log; exit 1; fi'
+          test -d input/mtz && echo "project folder created next to the app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-app
+          path: HarrySpotter-${{ env.VERSION }}-Linux-x86_64.tar.gz
+
+  linux-test:
+    # Debian packages Coot 1 (1.1.x), PyMOL and gemmi; Ubuntu 24.04 has no Coot.
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Coot 1, PyMOL, gemmi and a virtual display
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            coot pymol gemmi python3-gemmi python3-tk python3-pil python3-pil.imagetk python3-numpy \
+            xvfb xauth imagemagick libgl1-mesa-dri ca-certificates fonts-dejavu-core
+      - name: Show versions
+        run: |
+          which coot pymol gemmi python3
+          coot --version 2>/dev/null | head -2 || true
+      - name: Make test data (public PDB 1CBS)
+        run: python3 ci/make_test_data.py testdata
+      - name: Run tests
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1600x1200x24" python3 ci/linux_tests.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-test-results
+          path: ci-out
+
+  windows:
+    # Native builds: x64 on Intel/AMD Windows, ARM64 on ARM Windows.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            arch: x64
+            label: x64
+          - runner: windows-11-arm
+            arch: arm64
+            label: ARM64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.arch }}
+      - name: Install build tools
+        run: python -m pip install pyinstaller pillow
+      - name: Build
+        run: |
+          python make_icon.py
+          python -m PyInstaller --noconfirm HarrySpotter-windows.spec
+      - name: Package
+        run: |
+          $name = "HarrySpotter-$env:VERSION"
+          New-Item -ItemType Directory -Force "package/$name" | Out-Null
+          Copy-Item -Recurse dist/HarrySpotter/* "package/$name/"
+          Copy-Item README_FIRST.txt "package/$name/"
+          tar -a -c -f "$name-Windows-${{ matrix.label }}.zip" -C package $name
+      - name: Check the packaged app starts
+        run: |
+          New-Item -ItemType Directory smoke | Out-Null
+          tar -xf "HarrySpotter-$env:VERSION-Windows-${{ matrix.label }}.zip" -C smoke
+          $app = "smoke/HarrySpotter-$env:VERSION"
+          $p = Start-Process "$app/HarrySpotter.exe" -PassThru
+          Start-Sleep -Seconds 15
+          if ($p.HasExited) { Write-Error "APP EXITED (code $($p.ExitCode))"; exit 1 }
+          Write-Host "APP RUNNING"
+          Stop-Process -Id $p.Id -Force
+          if (-not (Test-Path "$app/input/mtz")) { Write-Error "project folder not created"; exit 1 }
+          Write-Host "project folder created next to the app"
+      - name: Windows checks
+        run: python ci/windows_tests.py "smoke/HarrySpotter-$env:VERSION/HarrySpotter.exe" ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.label }}
+          path: |
+            HarrySpotter-${{ env.VERSION }}-Windows-${{ matrix.label }}.zip
+            ci-out
