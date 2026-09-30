@@ -12,13 +12,16 @@ authors:
   - family-names: Morgan
     given-names: Harry
     affiliation: University of Bath
-version: "3.2"
-date-released: 2026-09-29
+version: "3.3"
+date-released: 2026-09-30
 doi: 10.5281/zenodo.23020039
 identifiers:
   - type: doi
     value: 10.5281/zenodo.23020039
     description: All versions (always resolves to the latest release)
+  - type: doi
+    value: 10.5281/zenodo.23047881
+    description: Version 3.2
   - type: doi
     value: 10.5281/zenodo.23020040
     description: Version 3.1

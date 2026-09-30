@@ -170,8 +170,8 @@ If you use Harry Spotter in your research, please cite it:
 > Morgan, H. *Harry Spotter* (software). Zenodo. https://doi.org/10.5281/zenodo.23020039
 
 This DOI always points to the latest version. To cite a specific release, use its
-own DOI from [Zenodo](https://doi.org/10.5281/zenodo.23020039) (v3.1:
-[10.5281/zenodo.23020040](https://doi.org/10.5281/zenodo.23020040)). GitHub's
+own DOI from [Zenodo](https://doi.org/10.5281/zenodo.23020039) (e.g. v3.2:
+[10.5281/zenodo.23047881](https://doi.org/10.5281/zenodo.23047881)). GitHub's
 **"Cite this repository"** button gives APA and BibTeX formats.
 
 ## Licence
