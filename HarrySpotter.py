@@ -28,16 +28,22 @@ except ImportError:
 # re-Browsing to the same folders every session.
 # ==========================================================================
 IS_WINDOWS = sys.platform.startswith("win")
-COMPUTER = "PC" if IS_WINDOWS else "Mac"
-FILE_BROWSER = "File Explorer" if IS_WINDOWS else "Finder"
+IS_MAC = sys.platform == "darwin"
+IS_LINUX = not IS_WINDOWS and not IS_MAC
+COMPUTER = "PC" if IS_WINDOWS else "Mac" if IS_MAC else "computer"
+FILE_BROWSER = "File Explorer" if IS_WINDOWS else "Finder" if IS_MAC else "your file manager"
+# Shell used to run CCP4/Phenix/Coot on macOS and Linux (many Linux systems have no zsh).
+LOGIN_SHELL = ["/bin/zsh", "-l", "-c"] if IS_MAC else ["/bin/bash", "-l", "-c"]
 # Hide the console window that would otherwise flash up for every
 # Phenix/Dimple/Coot command the windowed .exe runs.
 NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if IS_WINDOWS else {}
 
 if IS_WINDOWS:
     CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HarrySpotter")
-else:
+elif IS_MAC:
     CONFIG_DIR = os.path.expanduser("~/Library/Application Support/HarrySpotter")
+else:
+    CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "HarrySpotter")
 # 3.x keeps its own settings file, so it starts fresh (like a new user) and
 # never picks up paths remembered by the 2.x test builds, which use config.json.
 CONFIG_FILE = os.path.join(CONFIG_DIR, "settings-v3.json")
@@ -70,9 +76,9 @@ def app_project_dir():
             if os.path.basename(path) == "dist":
                 return os.path.dirname(path)
             path = os.path.dirname(path)
-        if IS_WINDOWS:
-            # Shared as a zip: the folder holding HarrySpotter.exe is the
-            # project, with input\ created beside it on first run.
+        if IS_WINDOWS or IS_LINUX:
+            # Shared as a zip / tar.gz: the folder holding the program is the
+            # project, with input/ created beside it on first run.
             folder = os.path.dirname(os.path.abspath(sys.executable))
             try:
                 os.makedirs(os.path.join(folder, "input", "mtz"), exist_ok=True)
@@ -96,6 +102,15 @@ def google_drive_roots():
         if os.path.isdir(os.path.join(os.path.expanduser("~"), "My Drive")):
             roots.append(os.path.expanduser("~"))
         return roots
+    if IS_LINUX:
+        # Google makes no Drive app for Linux; people mount Drive with rclone or
+        # Insync. Look in the usual places (a mount point only counts if it isn't
+        # empty, i.e. Drive is actually mounted there).
+        home = os.path.expanduser("~")
+        cands = sorted(glob.glob(os.path.join(home, "Insync", "*", "Google Drive"))) + \
+                [os.path.join(home, n) for n in ("GoogleDrive", "Google Drive", "google-drive", "googledrive",
+                                                 "gdrive", "GDrive", "Drive")]
+        return [c for c in cands if os.path.isdir(c) and _listdir_safe(c)]
     return sorted(glob.glob(os.path.expanduser("~/Library/CloudStorage/GoogleDrive-*")))
 
 
@@ -237,6 +252,29 @@ DIFF_MAP_COLUMNS = [("FoFo", "PHFc"), ("F_OBS_MINUS_F_OBS", "PHIF_OBS_MINUS_F_OB
 TWOFOFC_MAP_COLUMNS = [("FWT", "PHWT"), ("2FOFCWT", "PH2FOFCWT")]
 
 
+def LINUX_SOFTWARE_BASES():
+    """Folders where crystallography software is usually installed on Linux."""
+    home = os.path.expanduser("~")
+    return ["/opt/xtal", "/usr/local/xtal", "/opt", "/usr/local", home,
+            os.path.join(home, "software"), os.path.join(home, "programs"), os.path.join(home, "opt")]
+
+
+def ccp4_setup_scripts(dimple_path=""):
+    """CCP4's environment script(s) (ccp4.setup-sh), sourced before running
+    Dimple or Coot on macOS/Linux. Next to Dimple first, then usual places."""
+    found = []
+    if dimple_path and os.path.sep in dimple_path:
+        cand = os.path.join(os.path.dirname(dimple_path), "ccp4.setup-sh")
+        if os.path.isfile(cand):
+            found.append(cand)
+    if IS_MAC:
+        found += sorted(glob.glob("/Applications/ccp4-*/bin/ccp4.setup-sh"))
+    elif IS_LINUX:
+        for base in LINUX_SOFTWARE_BASES():
+            found += sorted(glob.glob(os.path.join(base, "ccp4*", "bin", "ccp4.setup-sh")))
+    return list(dict.fromkeys(found))   # no duplicates, order kept
+
+
 def find_gemmi(hints=()):
     """The gemmi command-line tool that comes with CCP4 (used to turn MTZ map
     coefficients into maps PyMOL can read). `hints` are other CCP4 program
@@ -253,9 +291,12 @@ def find_gemmi(hints=()):
         bases = [os.environ.get("SystemDrive", "C:") + "\\", os.path.expanduser("~")] + \
                 [os.environ.get(v) for v in ("ProgramFiles", "ProgramFiles(x86)") if os.environ.get(v)]
         patterns = ["CCP4*\\bin\\gemmi.exe", "CCP4*\\*\\bin\\gemmi.exe"]
-    else:
+    elif IS_MAC:
         bases = ["/Applications", os.path.expanduser("~/Applications")]
         patterns = ["ccp4-*/bin/gemmi"]
+    else:
+        bases = LINUX_SOFTWARE_BASES()
+        patterns = ["ccp4-*/bin/gemmi", "ccp4*/bin/gemmi"]
     for base in bases:
         for pattern in patterns:
             found = sorted(glob.glob(os.path.join(base, pattern)))
@@ -556,12 +597,14 @@ T = {
     "disabled_bg": "#dde2e8", "disabled_fg": "#8a94a0", "field": "#f8fafc",
     "seg_bg": "#e3e7ec", "log_bg": "#111827", "log_fg": "#e5e7eb",
 }
-FONT = "Segoe UI" if IS_WINDOWS else "Helvetica Neue"
-MONO_FONT = ("Consolas", -14) if IS_WINDOWS else ("Menlo", 11)
+FONT = "Segoe UI" if IS_WINDOWS else "Helvetica Neue" if IS_MAC else "DejaVu Sans"
+MONO_FONT = ("Consolas", -14) if IS_WINDOWS else ("Menlo", 11) if IS_MAC else ("DejaVu Sans Mono", -14)
 
 
 def F(size=11, weight="normal"):
-    if IS_WINDOWS:
+    # Tk on Windows/Linux renders point sizes ~1.33x larger than on macOS;
+    # pixel sizes (negative) keep the card layout identical everywhere.
+    if not IS_MAC:
         return (FONT, -round(size * 1.25), weight)
     return (FONT, size, weight)
 
@@ -575,6 +618,7 @@ SOFTWARE_INFO = {
 }
 DRIVE_DOWNLOAD_URL = "https://www.google.com/drive/download/"
 DRIVE_WEB_URL = "https://drive.google.com/"
+RCLONE_DRIVE_URL = "https://rclone.org/drive/"
 
 
 def tool_available(path):
@@ -599,6 +643,8 @@ def drive_app_installed():
     if IS_WINDOWS:
         return any(os.path.isdir(os.path.join(os.environ.get(v, ""), "Google", "Drive File Stream"))
                    for v in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"))
+    if IS_LINUX:
+        return bool(shutil.which("rclone") or shutil.which("insync"))
     return os.path.isdir("/Applications/Google Drive.app")
 
 
@@ -613,8 +659,10 @@ def open_google_drive_app():
             subprocess.Popen([max(exes, key=os.path.getmtime)])
         else:
             open_url(DRIVE_DOWNLOAD_URL)
-    else:
+    elif IS_MAC:
         subprocess.run(["open", "-a", "Google Drive"])
+    else:
+        open_url(RCLONE_DRIVE_URL)
 
 
 def open_url(url):
@@ -1046,6 +1094,29 @@ class ApoInspectorGUI:
         if self.var_autosync.get() and self.var_drive_source.get().strip() and self.var_visit.get().strip():
             self.root.after(400, lambda: self.start_drive_sync(silent=True))
 
+    def auto_find_linux(self, software_type):
+        """Find a tool on Linux: PATH first, then the usual install folders
+        (CCP4 under /opt/xtal, /usr/local, ~; Phenix; PyMOL incl. conda)."""
+        on_path = {"coot": ["coot-1", "coot"], "dimple": ["dimple"],
+                   "phenix": ["phenix.fobs_minus_fobs_map"], "pymol": ["pymol"]}[software_type]
+        for name in on_path:
+            if shutil.which(name):
+                return shutil.which(name)
+        patterns = {
+            "coot": ["ccp4-*/bin/coot", "ccp4*/bin/coot", "coot*/bin/coot"],
+            "dimple": ["ccp4-*/bin/dimple", "ccp4*/bin/dimple"],
+            "phenix": ["phenix-*/phenix_bin/phenix.fobs_minus_fobs_map", "phenix-*/build/bin/phenix.fobs_minus_fobs_map",
+                       "phenix-*/bin/phenix.fobs_minus_fobs_map"],
+            "pymol": ["pymol/pymol", "pymol*/pymol", "pymol*/bin/pymol", "miniconda3/bin/pymol", "anaconda3/bin/pymol",
+                      "miniforge3/bin/pymol", "mambaforge/bin/pymol"],
+        }[software_type]
+        for base in LINUX_SOFTWARE_BASES():
+            for pattern in patterns:
+                found = [f for f in sorted(glob.glob(os.path.join(base, pattern))) if tool_available(f)]
+                if found:
+                    return found[-1]  # newest version by name
+        return on_path[-1]
+
     def auto_find_software(self, software_type):
         if self.is_windows:
             drives = [os.environ.get("SystemDrive", "C:") + "\\"]
@@ -1093,6 +1164,8 @@ class ApoInspectorGUI:
                             return target
             return on_path[0]
         else:
+            if IS_LINUX:
+                return self.auto_find_linux(software_type)
             if software_type == "pymol":
                 # Schrodinger (incentive) app bundles first, then open-source installs
                 apps = sorted(glob.glob("/Applications/PyMOL*.app/Contents/MacOS/PyMOL") +
@@ -1325,7 +1398,7 @@ class ApoInspectorGUI:
         self.btn_view = FlatButton(row, "📊  View results", self.open_results, style="secondary", size=11)
         self.btn_view.grid(row=0, column=1, sticky="we", padx=(4, 0))
         self.btn_view.set_enabled(False)
-        tk.Label(run.body, text=("Ctrl+R" if IS_WINDOWS else "⌘R") + " runs the pipeline", font=F(10), bg=T["card"], fg=T["muted"]).pack(anchor="e", pady=(6, 0))
+        tk.Label(run.body, text=("⌘R" if IS_MAC else "Ctrl+R") + " runs the pipeline", font=F(10), bg=T["card"], fg=T["muted"]).pack(anchor="e", pady=(6, 0))
 
         # ---------------- ACTIVITY LOG ----------------
         self.outer = outer
@@ -1362,7 +1435,7 @@ class ApoInspectorGUI:
                     self.var_dimple, self.var_residue, self.var_contour, self.var_drive_source, self.var_chain,
                     self.var_pymol):
             var.trace_add("write", lambda *a: self.schedule_refresh())
-        self.root.bind_all("<Control-r>" if IS_WINDOWS else "<Command-r>",
+        self.root.bind_all("<Command-r>" if IS_MAC else "<Control-r>",
                            lambda e: self.start_pipeline() if self.btn_run._enabled else None)
 
         self.set_mode(self.var_mode.get(), persist=False)
@@ -1518,9 +1591,13 @@ class ApoInspectorGUI:
         else:
             self.set_dot("drive", "warn")
             self.set_dot("drive_source", "warn")
-            self.lbl_drive_status.config(
-                text="Google Drive installed but not signed in" if drive_app_installed()
-                else "Google Drive for Desktop not set up", fg=T["warn"])
+            if IS_LINUX:
+                status = "No Google Drive folder found - mount it with rclone or Insync"
+            elif drive_app_installed():
+                status = "Google Drive installed but not signed in"
+            else:
+                status = "Google Drive for Desktop not set up"
+            self.lbl_drive_status.config(text=status, fg=T["warn"])
             self.btn_drive_setup.pack()
 
         # Software
@@ -1605,16 +1682,36 @@ class ApoInspectorGUI:
         inner.pack(fill="both", expand=True, padx=24, pady=20)
 
         tk.Label(inner, text="☁  Connect Google Drive", font=F(18, "bold"), bg=T["card"], fg=T["text"]).pack(anchor="w")
-        tk.Label(inner, text="Harry Spotter reads beamtime data straight from your Google Drive. Sign in once with\n"
-                             f"Google Drive for Desktop and your visit folders appear on this {COMPUTER} like any other\n"
-                             "folder. Your Google password goes only to Google — Harry Spotter never sees it.",
-                 font=F(11), bg=T["card"], fg=T["muted"], justify="left").pack(anchor="w", pady=(4, 16))
+        if IS_LINUX:
+            intro = ("Harry Spotter reads beamtime data from your Google Drive. Google doesn't make a Drive app\n"
+                     "for Linux, so mount Drive as a folder with rclone (free) or Insync, then point Harry Spotter\n"
+                     "at it. Your Google password goes only to Google — Harry Spotter never sees it.")
+        else:
+            intro = ("Harry Spotter reads beamtime data straight from your Google Drive. Sign in once with\n"
+                     f"Google Drive for Desktop and your visit folders appear on this {COMPUTER} like any other\n"
+                     "folder. Your Google password goes only to Google — Harry Spotter never sees it.")
+        tk.Label(inner, text=intro, font=F(11), bg=T["card"], fg=T["muted"], justify="left").pack(anchor="w", pady=(4, 16))
 
-        steps = [
+        def choose_drive_folder():
+            path = filedialog.askdirectory(parent=win, title="Choose your mounted Google Drive folder")
+            if path:
+                self.var_drive_source.set(os.path.abspath(path))
+                self.persist_state()
+
+        linux_steps = [
+            ("install", "Install rclone (or Insync)", "rclone is free - e.g.  sudo apt install rclone", "rclone guide",
+             lambda: open_url(RCLONE_DRIVE_URL)),
+            ("signin", "Connect and mount your Drive",
+             "rclone config  (choose Google Drive), then\nrclone mount gdrive: ~/GoogleDrive --daemon",
+             "Choose folder…", choose_drive_folder),
+        ]
+        steps = linux_steps if IS_LINUX else [
             ("install", "Install Google Drive for Desktop", "Free download from Google.",
              "Download", lambda: open_url(DRIVE_DOWNLOAD_URL)),
             ("signin", "Sign in with your Google account", "Opens Google Drive, which signs you in via your browser.",
              "Open Google Drive", open_google_drive_app),
+        ]
+        steps += [
             ("shortcut", "Add the beamtime folder to My Drive",
              "If the visit folder was shared with you: on drive.google.com right-click it →\n"
              "Organise → Add shortcut to Drive.", "Open drive.google.com", lambda: open_url(DRIVE_WEB_URL)),
@@ -1663,6 +1760,9 @@ class ApoInspectorGUI:
             if not win.winfo_exists():
                 return
             mount = find_google_drive_mount()
+            chosen = self.var_drive_source.get().strip()
+            if not mount and IS_LINUX and os.path.isdir(chosen) and _listdir_safe(chosen):
+                mount = chosen
             mark("install", drive_app_installed() or bool(mount))
             mark("signin", bool(mount))
             if mount:
@@ -1740,8 +1840,10 @@ class ApoInspectorGUI:
                 os.makedirs(path, exist_ok=True)
             if self.is_windows:
                 subprocess.run(["explorer", path])
-            else:
+            elif IS_MAC:
                 subprocess.run(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
         except Exception as e:
             messagebox.showerror("Error", f"Could not open folder:\n{e}")
 
@@ -1751,11 +1853,12 @@ class ApoInspectorGUI:
             if not silent:
                 messagebox.showwarning(
                     "Google Drive Not Found",
-                    "Set a valid Google Drive Source Folder first.\n\n"
+                    "Set a valid Google Drive Source Folder first.\n\n" + (
+                    "On Linux, mount your Google Drive as a folder (e.g. with rclone or Insync), then choose "
+                    "that folder under Data → Folders → Google Drive folder." if IS_LINUX else
                     "If Google Drive for Desktop isn't installed and signed in yet, "
                     "install it from Google and sign in - your Drive files then "
-                    "appear locally under ~/Library/CloudStorage/GoogleDrive-<you>, "
-                    "with no manual downloading required."
+                    "appear on this computer as a normal folder, with no manual downloading required.")
                 )
             return
 
@@ -2113,7 +2216,7 @@ class ApoInspectorGUI:
                             subprocess.run(cmd, stdout=p_log, stderr=subprocess.STDOUT, shell=True, cwd=phenix_out, **NO_WINDOW)
                         else:
                             mac_cmd = f'{cmd}'
-                            subprocess.run(['/bin/zsh', '-l', '-c', mac_cmd], stdout=p_log, stderr=subprocess.STDOUT, cwd=phenix_out)
+                            subprocess.run(LOGIN_SHELL + [mac_cmd], stdout=p_log, stderr=subprocess.STDOUT, cwd=phenix_out)
                             
                     raw_mtz_1 = os.path.join(phenix_out, "FoFoPHFc.mtz")
                     raw_mtz_2 = os.path.join(phenix_out, "fobs_minus_fobs_map.mtz")
@@ -2154,7 +2257,7 @@ class ApoInspectorGUI:
                 dimple_exe = self.var_dimple.get().strip()
                 ccp4_setup_path = ""
                 if not self.is_windows:
-                    potential_setups = glob.glob("/Applications/ccp4-*/bin/ccp4.setup-sh")
+                    potential_setups = ccp4_setup_scripts(self.var_dimple.get().strip())
                     if potential_setups: ccp4_setup_path = potential_setups[0]
                 
                 for mtz in mtz_files:
@@ -2170,7 +2273,7 @@ class ApoInspectorGUI:
                         else:
                             source_cmd = f"source '{ccp4_setup_path}' >/dev/null 2>&1; " if ccp4_setup_path else ""
                             mac_cmd = f"{source_cmd}'{dimple_exe}' '{mtz}' '{abs_model}' '{dimple_out}'"
-                            subprocess.run(['/bin/zsh', '-l', '-c', mac_cmd], stdout=d_log, stderr=subprocess.STDOUT)
+                            subprocess.run(LOGIN_SHELL + [mac_cmd], stdout=d_log, stderr=subprocess.STDOUT)
                     
                     abs_final_pdb = os.path.join(dimple_out, "final.pdb")
                     abs_final_mtz = os.path.join(dimple_out, "final.mtz")
@@ -2407,11 +2510,11 @@ else:
                                                 env=coot_env(), **NO_WINDOW)
                     else:
                         ccp4_setup_path = ""
-                        potential_setups = glob.glob("/Applications/ccp4-*/bin/ccp4.setup-sh")
+                        potential_setups = ccp4_setup_scripts(self.var_dimple.get().strip())
                         if potential_setups: ccp4_setup_path = potential_setups[0]
                         source_cmd = f"source '{ccp4_setup_path}' >/dev/null 2>&1; " if ccp4_setup_path else ""
                         mac_cmd = f"{source_cmd}'{coot_exe}' --no-state-script --script '{temp_py}'"
-                        proc = subprocess.Popen(['/bin/zsh', '-l', '-c', mac_cmd], stdout=c_log,
+                        proc = subprocess.Popen(LOGIN_SHELL + [mac_cmd], stdout=c_log,
                                                 stderr=subprocess.STDOUT, start_new_session=True)
                     # Coot's own script can't enforce a time limit if Coot never gets far
                     # enough to run it (e.g. no OpenGL), so the app enforces one.
@@ -2544,6 +2647,13 @@ else:
                 canvas.yview_scroll(-int(dy), "units")
 
         toplevel.bind("<MouseWheel>", on_wheel, add="+")
+        if IS_LINUX:
+            # X11 reports wheel movement as button 4 (up) / 5 (down)
+            def on_button(event, direction):
+                if targeted(event) and scrollable():
+                    canvas.yview_scroll(direction * 40, "units")
+            toplevel.bind("<Button-4>", lambda e: on_button(e, -1), add="+")
+            toplevel.bind("<Button-5>", lambda e: on_button(e, 1), add="+")
         try:
             toplevel.bind("<TouchpadScroll>", on_touchpad, add="+")
         except tk.TclError:
@@ -2684,11 +2794,11 @@ except Exception as e:
             subprocess.Popen(win_cmd, shell=True, env=coot_env())
         else:
             ccp4_setup_path = ""
-            potential_setups = glob.glob("/Applications/ccp4-*/bin/ccp4.setup-sh")
+            potential_setups = ccp4_setup_scripts(self.var_dimple.get().strip())
             if potential_setups: ccp4_setup_path = potential_setups[0]
             source_cmd = f"source '{ccp4_setup_path}' >/dev/null 2>&1; " if ccp4_setup_path else ""
             mac_cmd = f"{source_cmd}'{coot_exe}' --script '{script_path}'"
-            subprocess.Popen(['/bin/zsh', '-l', '-c', mac_cmd])
+            subprocess.Popen(LOGIN_SHELL + [mac_cmd])
 
     ASSESSMENTS = {
         # value: (button text, colour key, soft background)
