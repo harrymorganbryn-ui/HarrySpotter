@@ -35,33 +35,27 @@ jobs:
           path: HarrySpotter-3.3-Linux-x86_64.tar.gz
 
   test:
+    # Debian 13 packages Coot 1 (1.1.x), PyMOL and gemmi; Ubuntu 24.04 has no Coot.
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        shell: bash -el {0}
+    container: debian:trixie
     steps:
       - uses: actions/checkout@v4
-      - name: Install a virtual display and screenshot tools
+      - name: Install Coot 1, PyMOL, gemmi and a virtual display
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb imagemagick libgl1-mesa-dri mesa-utils
-      # Ubuntu no longer packages Coot; conda-forge has Coot 1, PyMOL and gemmi.
-      - uses: mamba-org/setup-micromamba@v2
-        with:
-          environment-name: hs
-          create-args: >-
-            python=3.12 tk pillow numpy gemmi coot pymol-open-source
-          init-shell: bash
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            coot pymol gemmi python3-gemmi python3-tk python3-pil python3-numpy \
+            xvfb xauth imagemagick libgl1-mesa-dri ca-certificates fonts-dejavu-core
       - name: Show versions
         run: |
-          which coot pymol gemmi python
-          coot --version | head -2 || true
+          which coot pymol gemmi python3
+          coot --version 2>/dev/null | head -2 || true
       - name: Make test data (public PDB 1CBS)
-        run: python ci/make_test_data.py testdata
+        run: python3 ci/make_test_data.py testdata
       - name: Run tests
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a -s "-screen 0 1600x1200x24" python ci/linux_tests.py
+        run: xvfb-run -a -s "-screen 0 1600x1200x24" python3 ci/linux_tests.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
