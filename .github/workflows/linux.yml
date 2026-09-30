@@ -36,20 +36,32 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash -el {0}
     steps:
       - uses: actions/checkout@v4
-      - name: Install Coot, PyMOL, gemmi and a virtual display
+      - name: Install a virtual display and screenshot tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-tk python3-pil python3-numpy xvfb imagemagick \
-            libgl1-mesa-dri mesa-utils coot pymol gemmi
-          sudo apt-get install -y python3-gemmi || python3 -m pip install --user --break-system-packages gemmi
+          sudo apt-get install -y xvfb imagemagick libgl1-mesa-dri mesa-utils
+      # Ubuntu no longer packages Coot; conda-forge has Coot 1, PyMOL and gemmi.
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: hs
+          create-args: >-
+            python=3.12 tk pillow numpy gemmi coot pymol-open-source
+          init-shell: bash
+      - name: Show versions
+        run: |
+          which coot pymol gemmi python
+          coot --version | head -2 || true
       - name: Make test data (public PDB 1CBS)
-        run: python3 ci/make_test_data.py testdata
+        run: python ci/make_test_data.py testdata
       - name: Run tests
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a -s "-screen 0 1600x1200x24" python3 ci/linux_tests.py
+        run: xvfb-run -a -s "-screen 0 1600x1200x24" python ci/linux_tests.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
