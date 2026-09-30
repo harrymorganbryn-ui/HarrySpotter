@@ -12,7 +12,7 @@ computes a difference map for every dataset, renders a 360° spin GIF of the den
 around your target residue in Coot, and lets you review them all side by side,
 marking each one **Ligand present** or **No ligand**, with a grouped CSV export.
 
-It runs on **macOS** and **Windows**.
+It runs on **macOS**, **Windows** and **Linux**.
 
 ## Features
 
@@ -44,7 +44,7 @@ To **run** the app:
 | [Phenix](https://phenix-online.org/download/) | time-resolved Fo-Fo maps |
 | [CCP4](https://www.ccp4.ac.uk/download/) (Dimple) | apo screening |
 | [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/) / WinCoot | rendering and inspection |
-| [PyMOL](https://pymol.org/) (optional) | "Open in PyMOL" from the results — maps are converted with CCP4's `gemmi` |
+| [PyMOL](https://pymol.org/) (optional) | "Open in PyMOL" from the results — maps are converted with CCP4's `gemmi`. Schrödinger's PyMOL needs an active licence to load files; free open-source PyMOL also works (`conda install -c conda-forge pymol-open-source`) |
 
 To **build** it from source: Python 3.12+ with Tkinter, plus the packages in
 `requirements.txt`.
@@ -91,6 +91,18 @@ Install the tools listed under [Requirements](#requirements). The app's
 and **Locate…** if one is installed somewhere unusual. The first launch also walks
 you through connecting Google Drive.
 
+### Linux (x86-64)
+
+1. Download `HarrySpotter-<version>-Linux-x86_64.tar.gz` and extract it where you can
+   write, e.g. `tar -xzf HarrySpotter-*-Linux-x86_64.tar.gz` in your home folder.
+2. Run `./HarrySpotter` from the extracted folder. Optionally run `./install.sh` to add
+   Harry Spotter to your applications menu.
+3. Google doesn't make a Drive app for Linux: mount Drive as a folder with
+   [rclone](https://rclone.org/drive/) or Insync (`~/GoogleDrive` is found automatically;
+   any other folder can be chosen in the app). See `README_FIRST.txt` in the download.
+
+Built on Ubuntu 22.04, so it runs on 22.04 and newer and other recent distributions.
+
 ## Building
 
 ### macOS
@@ -102,11 +114,19 @@ python3 -m pip install -r requirements.txt
 
 The app is written to `dist/HarrySpotter.app`.
 
+### Linux
+
+```bash
+sudo apt install python3-tk          # or your distribution's equivalent
+python3 -m pip install -r requirements.txt
+VERSION=3.3 ./build_linux.sh         # -> HarrySpotter-3.3-Linux-x86_64.tar.gz
+```
+
 ### Windows
 
 Double-click `build_windows.bat` (it installs the build tools, makes the icon and
 builds). The app is written to `dist\HarrySpotter\HarrySpotter.exe`.
-Then run `package_windows.bat` to make a shareable `HarrySpotter-3.2-Windows.zip`
+Then run `package_windows.bat` to make a shareable `HarrySpotter-3.3-Windows.zip`
 (see `README_FIRST.txt`, which goes inside the zip).
 
 ### Running from source
@@ -139,6 +159,8 @@ Settings are remembered per project in
 | `HarrySpotter.spec`, `build_mac.sh` | macOS build |
 | `HarrySpotter-windows.spec`, `build_windows.bat`, `make_icon.py` | Windows build |
 | `package_windows.bat`, `README_FIRST.txt` | Windows shareable zip |
+| `HarrySpotter-linux.spec`, `build_linux.sh`, `linux/` | Linux build, menu entry and notes |
+| `ci/`, `.github/workflows/linux.yml` | Linux build and automated tests (GitHub Actions) |
 | `lab_logo.png`, `logo.icns` | artwork |
 
 ## Citing

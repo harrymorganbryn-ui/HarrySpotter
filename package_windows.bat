@@ -1,5 +1,5 @@
 @echo off
-rem Make HarrySpotter-3.2-Windows.zip to share. Run build_windows.bat first.
+rem Make HarrySpotter-3.3-Windows.zip to share. Run build_windows.bat first.
 setlocal
 cd /d "%~dp0"
 
@@ -9,7 +9,7 @@ if not exist "dist\HarrySpotter\HarrySpotter.exe" (
     exit /b 1
 )
 
-set "STAGE=package\HarrySpotter-3.2"
+set "STAGE=package\HarrySpotter-3.3"
 if exist package rmdir /s /q package
 mkdir "%STAGE%" || goto :fail
 
@@ -19,15 +19,15 @@ copy /y README_FIRST.txt "%STAGE%\" >nul || goto :fail
 rem Only the app goes in the zip - no input data, results or settings.
 
 echo == Zipping...
-if exist HarrySpotter-3.2-Windows.zip del HarrySpotter-3.2-Windows.zip
+if exist HarrySpotter-3.3-Windows.zip del HarrySpotter-3.3-Windows.zip
 rem tar (built into Windows 10/11) writes standard zips; PowerShell's Compress-Archive
 rem uses backslash paths, which break when the zip is opened on a Mac or Linux.
-tar -a -c -f HarrySpotter-3.2-Windows.zip -C package HarrySpotter-3.2 || goto :fail
+tar -a -c -f HarrySpotter-3.3-Windows.zip -C package HarrySpotter-3.3 || goto :fail
 rmdir /s /q package
 
 echo.
 echo ==========================================================
-echo  READY TO SHARE:  HarrySpotter-3.2-Windows.zip
+echo  READY TO SHARE:  HarrySpotter-3.3-Windows.zip
 echo ==========================================================
 pause
 exit /b 0

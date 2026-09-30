@@ -1149,8 +1149,9 @@ class ApoInspectorGUI:
             if software_type == "pymol":
                 bases.append(os.environ.get("ProgramData", "C:\\ProgramData"))
             patterns = {
-                "pymol": ["PyMOL*\\PyMOLWin.exe", "PyMOL*\\PyMOL.exe", "PyMOL*\\PyMOL*\\PyMOLWin.exe",
-                          "Schrodinger\\PyMOL*\\PyMOLWin.exe", "Schrodinger\\PyMOL*\\PyMOL.exe",
+                "pymol": ["PyMOL*\\PyMOLWin.exe", "PyMOL*\\PyMOL*\\PyMOLWin.exe", "Schrodinger\\PyMOL*\\PyMOLWin.exe",
+                          "PyMOL*\\PyMOL.bat", "PyMOL*\\PyMOL*\\PyMOL.bat", "Schrodinger\\PyMOL*\\PyMOL.bat",
+                          "PyMOL*\\PyMOL.exe", "Schrodinger\\PyMOL*\\PyMOL.exe",
                           "miniconda3\\Scripts\\pymol.exe", "anaconda3\\Scripts\\pymol.exe",
                           "miniforge3\\Scripts\\pymol.exe", "mambaforge\\Scripts\\pymol.exe"],
                 "coot": ["WinCoot*\\wincoot.bat", "WinCoot*\\runwincoot.bat", "WinCoot*\\run_coot.bat",
@@ -1164,9 +1165,12 @@ class ApoInspectorGUI:
                            "phenix*\\*\\phenix.fobs_minus_fobs_map.bat"],
             }[software_type]
             on_path = {"coot": ["wincoot.bat", "runwincoot.bat", "run_coot.bat"], "dimple": ["dimple.bat", "dimple"],
-                       "pymol": ["pymol.exe", "pymol", "PyMOLWin.exe"],
+                       "pymol": ["PyMOLWin.exe", "PyMOL.bat", "pymol.exe", "pymol"],
                        "phenix": ["phenix.fobs_minus_fobs_map.bat", "phenix.fobs_minus_fobs_map"]}[software_type]
-            for name in on_path:
+            # PyMOL: prefer its own program (PyMOLWin.exe) from the install folders,
+            # registry or Start Menu over a "pymol.exe" found on PATH, which is often a
+            # console launcher from a Python package rather than PyMOL itself.
+            for name in ([] if software_type == "pymol" else on_path):
                 if shutil.which(name):
                     return shutil.which(name)
             for base in bases:
@@ -1184,8 +1188,12 @@ class ApoInspectorGUI:
                 for menu in menus:
                     for lnk in sorted(glob.glob(os.path.join(menu, "**", "*PyMOL*.lnk"), recursive=True)):
                         target = resolve_windows_shortcut(lnk)
-                        if target and target.lower().endswith(".exe"):
+                        # only shortcuts that point at PyMOL itself, not python.exe / cmd.exe
+                        if target and target.lower().endswith(".exe") and "pymol" in os.path.basename(target).lower():
                             return target
+                for name in on_path:
+                    if shutil.which(name):
+                        return shutil.which(name)
             return on_path[0]
         else:
             if IS_LINUX:
@@ -2738,13 +2746,37 @@ else:
         script_path = os.path.join(folder, "open_in_pymol.py")
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(script)
+        log_path = os.path.join(folder, "open_in_pymol.log")
         try:
-            subprocess.Popen([pymol_exe, script_path], cwd=folder)
+            with open(log_path, "w") as log_file:
+                proc = subprocess.Popen([pymol_exe, script_path], cwd=folder, stdout=log_file,
+                                        stderr=subprocess.STDOUT)
         except Exception as e:
-            messagebox.showerror("PyMOL", f"Couldn't start PyMOL:\n{e}", parent=self.results_window or self.root)
+            messagebox.showerror("PyMOL", f"Couldn't start PyMOL:\n{pymol_exe}\n\n{e}",
+                                 parent=self.results_window or self.root)
             return
-        self.log(f"🔬 Opening {d['base_name']} in PyMOL" +
+        self.log(f"🔬 Opening {d['base_name']} in PyMOL ({pymol_exe})" +
                  (f" - note: {problem}; asking PyMOL to read the MTZ directly" if problem else ""))
+
+        def check_started():
+            # PyMOL stays open while the user looks at the map; if it has already
+            # quit, it failed - say so instead of silently doing nothing.
+            if proc.poll() is None:
+                return
+            try:
+                with open(log_path, errors="replace") as f:
+                    tail = "".join(f.readlines()[-12:]).strip()
+            except OSError:
+                tail = ""
+            self.log(f"  ❌ PyMOL closed straight away (exit code {proc.returncode}). Program used: {pymol_exe}")
+            messagebox.showerror(
+                "PyMOL didn't open",
+                f"PyMOL closed straight away (exit code {proc.returncode}).\n\nProgram used:\n{pymol_exe}\n\n"
+                + (f"Its last output:\n{tail[-800:]}\n\n" if tail else "")
+                + "If that isn't PyMOL's own program, choose the right one with Locate… next to PyMOL "
+                  "in the Software card (on Windows usually PyMOLWin.exe).",
+                parent=self.results_window or self.root)
+        self.root.after(8000, check_started)
 
     def open_in_coot(self, d):
         coot_exe = self.var_coot.get().strip()

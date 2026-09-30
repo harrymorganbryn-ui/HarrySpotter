@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.3
+- **Linux support** (x86-64): settings in `~/.config`, Linux fonts and mouse wheel,
+  Ctrl+R, tools run through bash, and CCP4 / Coot / Phenix / PyMOL / gemmi found in the
+  usual Linux locations. Google Drive via rclone or Insync mounts, with setup
+  instructions in the app. Download as a `.tar.gz`; `install.sh` adds a menu entry.
+- Open in PyMOL: if PyMOL closes straight away, the app says so and shows which program it
+  ran and its output (saved to `open_in_pymol.log`). On Windows, PyMOL's own program
+  (PyMOLWin.exe, then PyMOL.bat) is preferred over console launchers found on PATH.
+- Linux builds and automated tests on GitHub Actions (Ubuntu 22.04 build; tests on
+  Debian 13 with Coot 1, PyMOL and gemmi).
+
 ## 3.2 (2026-09-29)
 - **Open in PyMOL** from the results window: the model and maps open centred on the
   target residue (difference map green/red at the chosen contour, 2mFo-DFc blue for

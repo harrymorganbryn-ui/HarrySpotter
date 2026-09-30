@@ -1,4 +1,4 @@
-Harry Spotter 3.2 for Windows
+Harry Spotter 3.3 for Windows
 =============================
 
 GETTING STARTED
