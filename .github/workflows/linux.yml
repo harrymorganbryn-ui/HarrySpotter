@@ -52,11 +52,6 @@ jobs:
           coot --version 2>/dev/null | head -2 || true
       - name: Make test data (public PDB 1CBS)
         run: python3 ci/make_test_data.py testdata
-      - name: Probe Coot screenshot routes (diagnostic)
-        continue-on-error: true
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a -s "-screen 0 1600x1200x24" python3 ci/coot_probe.py testdata ci-out/probe
       - name: Run tests
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
