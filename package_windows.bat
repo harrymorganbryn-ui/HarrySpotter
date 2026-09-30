@@ -16,6 +16,7 @@ mkdir "%STAGE%" || goto :fail
 echo == Copying the app...
 xcopy /e /i /q "dist\HarrySpotter" "%STAGE%" >nul || goto :fail
 copy /y README_FIRST.txt "%STAGE%\" >nul || goto :fail
+copy /y THIRD_PARTY_LICENSES.txt "%STAGE%\" >nul || goto :fail
 rem Only the app goes in the zip - no input data, results or settings.
 
 echo == Zipping...

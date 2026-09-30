@@ -46,6 +46,11 @@ To **run** the app:
 | [Coot](https://www2.mrc-lmb.cam.ac.uk/personal/pemsley/coot/) / WinCoot | rendering and inspection |
 | [PyMOL](https://pymol.org/) (optional) | "Open in PyMOL" from the results — maps are converted with CCP4's `gemmi`. Schrödinger's PyMOL needs an active licence to load files; free open-source PyMOL also works (`conda install -c conda-forge pymol-open-source`) |
 
+Harry Spotter does **not** include or distribute Phenix, CCP4, Dimple, Coot, gemmi or
+PyMOL. It runs the copies installed on your computer, so each must be obtained and
+licensed from its developers. Harry Spotter is an independent tool and is not affiliated
+with or endorsed by them; their names are used only to describe what it works with.
+
 To **build** it from source: Python 3.12+ with Tkinter, plus the packages in
 `requirements.txt`.
 
@@ -156,13 +161,14 @@ Settings are remembered per project in
 
 | File | Purpose |
 |---|---|
-| `HarrySpotter.py` | the application (single file, macOS + Windows) |
+| `HarrySpotter.py` | the application (single file, macOS, Windows and Linux) |
 | `HarrySpotter.spec`, `build_mac.sh` | macOS build |
 | `HarrySpotter-windows.spec`, `build_windows.bat`, `make_icon.py` | Windows build |
 | `package_windows.bat`, `README_FIRST.txt` | Windows shareable zip |
 | `HarrySpotter-linux.spec`, `build_linux.sh`, `linux/` | Linux build, menu entry and notes |
-| `ci/`, `.github/workflows/linux.yml` | Linux build and automated tests (GitHub Actions) |
-| `lab_logo.png`, `logo.icns` | artwork |
+| `ci/`, `.github/workflows/build.yml` | Linux and Windows (x64, ARM64) builds and automated tests (GitHub Actions) |
+| `collect_licenses.py` | writes `THIRD_PARTY_LICENSES.txt` (notices for the bundled Python, Tcl/Tk, Pillow) at build time |
+| `harryspotter_logo.png`, `lab_logo.png`, `logo.icns` | artwork |
 
 ## Citing
 
@@ -175,6 +181,20 @@ own DOI from [Zenodo](https://doi.org/10.5281/zenodo.23020039) (e.g. v3.2:
 [10.5281/zenodo.23047881](https://doi.org/10.5281/zenodo.23047881)). GitHub's
 **"Cite this repository"** button gives APA and BibTeX formats.
 
+Harry Spotter runs other programs to do the science, so please **also cite the ones
+your results used** (check each program's website for its current recommended
+citation):
+
+- **Phenix** (Fo-Fo maps) — Liebschner, D. *et al.* (2019). *Acta Cryst.* D**75**, 861–877.
+- **CCP4** — Agirre, J. *et al.* (2023). *Acta Cryst.* D**79**, 449–461.
+- **Dimple** (apo screening) — Wojdyr, M., Keegan, R., Winter, G. & Ashton, A. (2013). *Acta Cryst.* A**69**, s299.
+- **Coot** (map rendering) — Emsley, P., Lohkamp, B., Scott, W. G. & Cowtan, K. (2010). *Acta Cryst.* D**66**, 486–501.
+- **gemmi** (map conversion for PyMOL) — Wojdyr, M. (2022). *J. Open Source Softw.* **7**(73), 4200.
+- **PyMOL** — The PyMOL Molecular Graphics System, Schrödinger, LLC.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE). © 2026 Harry Morgan.
+
+The standalone downloads also bundle Python, Tcl/Tk and Pillow; their licence notices are
+in `THIRD_PARTY_LICENSES.txt` inside each download.

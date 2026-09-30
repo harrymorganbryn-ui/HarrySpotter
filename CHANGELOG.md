@@ -6,6 +6,10 @@
   environment, as if started by hand: the packaged app's own Python/Tcl/Tk settings (and
   on Linux its library path) are no longer passed on to them.
 - Windows x64 and ARM64 builds are made and checked on GitHub Actions, like Linux.
+- Every download includes `THIRD_PARTY_LICENSES.txt` (licence notices for the bundled
+  Python, Tcl/Tk and Pillow, collected at build time).
+- README: states that Phenix, CCP4, Dimple, Coot, gemmi and PyMOL are not included and
+  must be licensed from their developers, and lists how to cite them.
 
 ## 3.3
 - **Linux support** (x86-64): settings in `~/.config`, Linux fonts and mouse wheel,

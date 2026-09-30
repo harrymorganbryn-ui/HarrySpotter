@@ -27,3 +27,6 @@ config.json
 # OS clutter
 .DS_Store
 Thumbs.db
+
+# Generated at build time by collect_licenses.py
+THIRD_PARTY_LICENSES.txt

@@ -8,13 +8,14 @@ cd "$(dirname "$0")"
 VERSION="${VERSION:-3.4}"
 ARCH="$(uname -m)"
 
+python3 collect_licenses.py
 python3 -m PyInstaller --noconfirm HarrySpotter-linux.spec
 
 STAGE="package/HarrySpotter-$VERSION"
 rm -rf package
 mkdir -p "$STAGE"
 cp -r dist/HarrySpotter/. "$STAGE/"
-cp linux/install.sh linux/README_FIRST.txt "$STAGE/"
+cp linux/install.sh linux/README_FIRST.txt THIRD_PARTY_LICENSES.txt "$STAGE/"
 chmod +x "$STAGE/HarrySpotter" "$STAGE/install.sh"
 tar -czf "HarrySpotter-$VERSION-Linux-$ARCH.tar.gz" -C package "HarrySpotter-$VERSION"
 rm -rf package

@@ -27,6 +27,7 @@ echo == Making the Windows icon...
 
 echo.
 echo == Building HarrySpotter.exe (takes a minute)...
+%PY% collect_licenses.py || goto :fail
 %PY% -m PyInstaller --noconfirm HarrySpotter-windows.spec || goto :fail
 
 if not exist input\mtz mkdir input\mtz

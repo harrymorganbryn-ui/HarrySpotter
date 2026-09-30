@@ -92,13 +92,14 @@ jobs:
       - name: Build
         run: |
           python make_icon.py
+          python collect_licenses.py
           python -m PyInstaller --noconfirm HarrySpotter-windows.spec
       - name: Package
         run: |
           $name = "HarrySpotter-$env:VERSION"
           New-Item -ItemType Directory -Force "package/$name" | Out-Null
           Copy-Item -Recurse dist/HarrySpotter/* "package/$name/"
-          Copy-Item README_FIRST.txt "package/$name/"
+          Copy-Item README_FIRST.txt, THIRD_PARTY_LICENSES.txt "package/$name/"
           tar -a -c -f "$name-Windows-${{ matrix.label }}.zip" -C package $name
       - name: Check the packaged app starts
         run: |
